@@ -1,6 +1,7 @@
 import {
   ArchiveIcon,
   ArrowUpDownIcon,
+  CheckIcon,
   ChevronRightIcon,
   CloudIcon,
   GitPullRequestIcon,
@@ -146,6 +147,7 @@ import {
 } from "./ui/sidebar";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useCommandPaletteStore } from "../commandPaletteStore";
+import { useNotebookModeStore } from "../notebookModeStore";
 import {
   getSidebarThreadIdsToPrewarm,
   resolveAdjacentThreadId,
@@ -292,6 +294,7 @@ interface SidebarThreadRowProps {
   cancelRename: () => void;
   attemptArchiveThread: (threadRef: ScopedThreadRef) => Promise<void>;
   openPrLink: (event: React.MouseEvent<HTMLElement>, prUrl: string) => void;
+  notebookModeActive: boolean;
 }
 
 const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
@@ -317,12 +320,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     cancelRename,
     attemptArchiveThread,
     openPrLink,
+    notebookModeActive,
     thread,
   } = props;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
+  const isNotebookSourceSelected = useNotebookModeStore((state) =>
+    state.selectedThreadKeys.has(threadKey),
+  );
+  const toggleNotebookSourceThread = useNotebookModeStore((state) => state.toggleSourceThread);
   const hasSelection = useThreadSelectionStore((state) => state.selectedThreadKeys.size > 0);
   const runningTerminalIds = useTerminalStateStore(
     (state) =>
@@ -356,7 +364,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     environmentId: thread.environmentId,
     cwd: thread.branch != null ? gitCwd : null,
   });
-  const isHighlighted = isActive || isSelected;
+  const effectiveIsActive = notebookModeActive ? false : isActive;
+  const effectiveIsSelected = notebookModeActive ? isNotebookSourceSelected : isSelected;
+  const isHighlighted = effectiveIsActive || effectiveIsSelected;
   const isThreadRunning =
     thread.session?.status === "running" && thread.session.activeTurnId != null;
   const threadStatus = resolveThreadStatusPill({
@@ -394,21 +404,41 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   );
   const handleRowClick = useCallback(
     (event: React.MouseEvent) => {
+      if (notebookModeActive) {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleNotebookSourceThread(threadKey);
+        return;
+      }
       handleThreadClick(event, threadRef, orderedProjectThreadKeys);
     },
-    [handleThreadClick, orderedProjectThreadKeys, threadRef],
+    [
+      handleThreadClick,
+      notebookModeActive,
+      orderedProjectThreadKeys,
+      threadKey,
+      threadRef,
+      toggleNotebookSourceThread,
+    ],
   );
   const handleRowKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
+      if (notebookModeActive) {
+        toggleNotebookSourceThread(threadKey);
+        return;
+      }
       navigateToThread(threadRef);
     },
-    [navigateToThread, threadRef],
+    [navigateToThread, notebookModeActive, threadKey, threadRef, toggleNotebookSourceThread],
   );
   const handleRowContextMenu = useCallback(
     (event: React.MouseEvent) => {
       event.preventDefault();
+      if (notebookModeActive) {
+        return;
+      }
       if (hasSelection && isSelected) {
         void handleMultiSelectContextMenu({
           x: event.clientX,
@@ -431,6 +461,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       handleThreadContextMenu,
       hasSelection,
       isSelected,
+      notebookModeActive,
       threadRef,
     ],
   );
@@ -536,17 +567,40 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       <SidebarMenuSubButton
         render={rowButtonRender}
         size="sm"
-        isActive={isActive}
+        isActive={effectiveIsActive}
         data-testid={`thread-row-${thread.id}`}
         className={`${resolveThreadRowClassName({
-          isActive,
-          isSelected,
+          isActive: effectiveIsActive,
+          isSelected: effectiveIsSelected,
         })} relative isolate`}
         onClick={handleRowClick}
         onKeyDown={handleRowKeyDown}
         onContextMenu={handleRowContextMenu}
       >
-        <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
+        <div className="flex min-w-0 flex-1 items-center gap-2 pl-1 text-left">
+          {notebookModeActive ? (
+            <button
+              type="button"
+              aria-label={
+                isNotebookSourceSelected
+                  ? `Remove ${thread.title} from notebook sources`
+                  : `Add ${thread.title} to notebook sources`
+              }
+              className={`inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md border transition-colors ${
+                isNotebookSourceSelected
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border bg-background text-muted-foreground hover:text-foreground"
+              }`}
+              onPointerDown={stopPropagationOnPointerDown}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                toggleNotebookSourceThread(threadKey);
+              }}
+            >
+              {isNotebookSourceSelected ? <CheckIcon className="size-3.5" /> : null}
+            </button>
+          ) : null}
           {prStatus && (
             <Tooltip>
               <TooltipTrigger
@@ -604,7 +658,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               <TerminalIcon className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`} />
             </span>
           )}
-          <div className="flex min-w-12 justify-end">
+          <div className="flex min-w-12 justify-end pr-1">
             {isConfirmingArchive ? (
               <button
                 ref={handleConfirmArchiveRef}
@@ -745,6 +799,8 @@ interface SidebarProjectThreadListProps {
   cancelRename: () => void;
   attemptArchiveThread: (threadRef: ScopedThreadRef) => Promise<void>;
   openPrLink: (event: React.MouseEvent<HTMLElement>, prUrl: string) => void;
+  notebookModeActive: boolean;
+  notebookModeDisabled: boolean;
   expandThreadListForProject: (projectKey: string) => void;
   collapseThreadListForProject: (projectKey: string) => void;
 }
@@ -784,6 +840,8 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     cancelRename,
     attemptArchiveThread,
     openPrLink,
+    notebookModeActive,
+    notebookModeDisabled,
     expandThreadListForProject,
     collapseThreadListForProject,
   } = props;
@@ -793,7 +851,9 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
   return (
     <SidebarMenuSub
       ref={attachThreadListAutoAnimateRef}
-      className="mx-1 my-0 w-full translate-x-0 gap-0.5 overflow-hidden px-1.5 py-0"
+      className={`mx-1 my-0 w-full translate-x-0 gap-0.5 overflow-hidden px-1.5 py-0 ${
+        notebookModeDisabled ? "pointer-events-none opacity-45" : ""
+      }`}
     >
       {shouldShowThreadPanel && showEmptyThreadState ? (
         <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
@@ -834,6 +894,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
               cancelRename={cancelRename}
               attemptArchiveThread={attemptArchiveThread}
               openPrLink={openPrLink}
+              notebookModeActive={notebookModeActive}
             />
           );
         })}
@@ -939,6 +1000,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const removeFromSelection = useThreadSelectionStore((state) => state.removeFromSelection);
   const setSelectionAnchor = useThreadSelectionStore((state) => state.setAnchor);
   const selectedThreadCount = useThreadSelectionStore((state) => state.selectedThreadKeys.size);
+  const notebookActiveProjectKey = useNotebookModeStore((state) => state.activeProjectKey);
+  const toggleNotebookProject = useNotebookModeStore((state) => state.toggleProject);
+  const notebookModeActive = notebookActiveProjectKey !== null;
+  const isNotebookProject = notebookActiveProjectKey === project.projectKey;
   const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{
     threadId: ThreadId;
   }>({
@@ -1197,6 +1262,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         event.stopPropagation();
         return;
       }
+      if (notebookModeActive && !isNotebookProject) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       if (dragInProgressRef.current) {
         event.preventDefault();
         event.stopPropagation();
@@ -1217,6 +1287,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       clearSelection,
       dragInProgressRef,
       project.projectKey,
+      isNotebookProject,
+      notebookModeActive,
       selectedThreadCount,
       suppressProjectClickAfterDragRef,
       suppressProjectClickForContextMenuRef,
@@ -1231,9 +1303,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       if (dragInProgressRef.current) {
         return;
       }
+      if (notebookModeActive && !isNotebookProject) {
+        return;
+      }
       toggleProject(project.projectKey);
     },
-    [dragInProgressRef, project.projectKey, toggleProject],
+    [dragInProgressRef, isNotebookProject, notebookModeActive, project.projectKey, toggleProject],
   );
 
   const handleProjectButtonPointerDownCapture = useCallback(
@@ -1533,6 +1608,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       threadRef: ScopedThreadRef,
       orderedProjectThreadKeys: readonly string[],
     ) => {
+      if (notebookModeActive && !isNotebookProject) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       const isMac = isMacPlatform(navigator.platform);
       const isModClick = isMac ? event.metaKey : event.ctrlKey;
       const isShiftClick = event.shiftKey;
@@ -1560,7 +1640,15 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         params: buildThreadRouteParams(threadRef),
       });
     },
-    [clearSelection, rangeSelectTo, router, setSelectionAnchor, toggleThreadSelection],
+    [
+      clearSelection,
+      isNotebookProject,
+      notebookModeActive,
+      rangeSelectTo,
+      router,
+      setSelectionAnchor,
+      toggleThreadSelection,
+    ],
   );
 
   const handleMultiSelectContextMenu = useCallback(
@@ -1707,6 +1795,15 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       })();
     },
     [createThreadForProjectMember, project.groupedProjectCount, project.memberProjects],
+  );
+
+  const handleNotebookModeClick = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleNotebookProject(project.projectKey);
+    },
+    [project.projectKey, toggleNotebookProject],
   );
 
   const attemptArchiveThread = useCallback(
@@ -1951,7 +2048,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           size="sm"
           className={`gap-2 px-2 py-1.5 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground ${
             isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
-          }`}
+          } ${notebookModeActive && !isNotebookProject ? "pointer-events-none opacity-45" : ""}`}
           {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.attributes : {})}
           {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.listeners : {})}
           onPointerDownCapture={handleProjectButtonPointerDownCapture}
@@ -2020,7 +2117,21 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         <Tooltip>
           <TooltipTrigger
             render={
-              <div className="pointer-events-none absolute top-1 right-1.5 opacity-0 transition-opacity duration-150 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100">
+              <div className="pointer-events-none absolute top-1 right-1.5 flex opacity-0 transition-opacity duration-150 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100">
+                <button
+                  type="button"
+                  aria-label={
+                    isNotebookProject
+                      ? `Exit notebook mode for ${project.displayName}`
+                      : `Open notebook mode for ${project.displayName}`
+                  }
+                  className={`inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 hover:bg-secondary hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring ${
+                    isNotebookProject ? "bg-secondary text-foreground" : ""
+                  }`}
+                  onClick={handleNotebookModeClick}
+                >
+                  <SearchIcon className="size-3.5" />
+                </button>
                 <button
                   type="button"
                   aria-label={`Create new thread in ${project.displayName}`}
@@ -2034,7 +2145,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             }
           />
           <TooltipPopup side="top">
-            {newThreadShortcutLabel ? `New thread (${newThreadShortcutLabel})` : "New thread"}
+            {isNotebookProject
+              ? "Exit notebook mode"
+              : newThreadShortcutLabel
+                ? `Notebook mode / New thread (${newThreadShortcutLabel})`
+                : "Notebook mode / New thread"}
           </TooltipPopup>
         </Tooltip>
       </div>
@@ -2071,6 +2186,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         cancelRename={cancelRename}
         attemptArchiveThread={attemptArchiveThread}
         openPrLink={openPrLink}
+        notebookModeActive={isNotebookProject}
+        notebookModeDisabled={notebookModeActive && !isNotebookProject}
         expandThreadListForProject={expandThreadListForProject}
         collapseThreadListForProject={collapseThreadListForProject}
       />

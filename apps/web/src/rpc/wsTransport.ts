@@ -25,6 +25,7 @@ import { isTransportConnectionErrorMessage } from "./transportError";
 interface SubscribeOptions {
   readonly retryDelay?: Duration.Input;
   readonly onResubscribe?: () => void;
+  readonly resubscribeOnComplete?: boolean;
 }
 
 interface RequestOptions {
@@ -111,6 +112,7 @@ export class WsTransport {
 
     let active = true;
     let hasReceivedValue = false;
+    const resubscribeOnComplete = options?.resubscribeOnComplete ?? true;
     const retryDelayMs = Duration.toMillis(
       Duration.fromInputUnsafe(options?.retryDelay ?? DEFAULT_SUBSCRIPTION_RETRY_DELAY_MS),
     );
@@ -145,6 +147,9 @@ export class WsTransport {
           cancelCurrentStream = runningStream.cancel;
           await runningStream.completed;
           cancelCurrentStream = NOOP;
+          if (!resubscribeOnComplete) {
+            return;
+          }
         } catch (error) {
           cancelCurrentStream = NOOP;
           if (!active || this.disposed) {

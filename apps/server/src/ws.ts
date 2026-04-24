@@ -43,6 +43,7 @@ import {
   observeRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
+import { ProviderService } from "./provider/Services/ProviderService.ts";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup.ts";
 import { ServerSettingsService } from "./serverSettings.ts";
@@ -141,6 +142,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const gitStatusBroadcaster = yield* GitStatusBroadcaster;
       const terminalManager = yield* TerminalManager;
       const providerRegistry = yield* ProviderRegistry;
+      const providerService = yield* ProviderService;
       const config = yield* ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents;
       const serverSettings = yield* ServerSettingsService;
@@ -637,6 +639,95 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                   }),
               ),
             ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.notebookTurn]: (input) =>
+          observeRpcStreamEffect(
+            ORCHESTRATION_WS_METHODS.notebookTurn,
+            Effect.gen(function* () {
+              const toNotebookTurnError = (cause: unknown) =>
+                new OrchestrationDispatchCommandError({
+                  message: "Failed to run notebook turn",
+                  cause,
+                });
+
+              // Prototype path: this creates a transient provider session that is
+              // not backed by an orchestration thread. The projection layer ignores
+              // these runtime events because no matching T3 thread exists.
+              yield* providerService
+                .startSession(input.threadId, {
+                  threadId: input.threadId,
+                  provider: input.modelSelection.provider,
+                  cwd: input.cwd,
+                  modelSelection: input.modelSelection,
+                  runtimeMode: "approval-required",
+                })
+                .pipe(Effect.mapError(toNotebookTurnError));
+
+              const sendTurn = providerService
+                .sendTurn({
+                  threadId: input.threadId,
+                  input: input.prompt,
+                  modelSelection: input.modelSelection,
+                  interactionMode: "default",
+                })
+                .pipe(Effect.mapError(toNotebookTurnError));
+
+              const runtimeItems = providerService.streamEvents.pipe(
+                Stream.filter((event) => event.threadId === input.threadId),
+                Stream.filter(
+                  (event) =>
+                    event.type === "content.delta" ||
+                    event.type === "turn.completed" ||
+                    event.type === "request.opened" ||
+                    event.type === "runtime.error",
+                ),
+                Stream.map((event) => {
+                  if (
+                    event.type === "content.delta" &&
+                    event.payload.streamKind === "assistant_text"
+                  ) {
+                    return { type: "delta" as const, delta: event.payload.delta };
+                  }
+                  if (event.type === "turn.completed") {
+                    const message =
+                      event.payload.state === "failed"
+                        ? (event.payload.errorMessage ?? "Notebook turn failed.")
+                        : null;
+                    return message
+                      ? { type: "error" as const, message }
+                      : { type: "done" as const };
+                  }
+                  if (event.type === "request.opened") {
+                    return {
+                      type: "error" as const,
+                      message:
+                        "Notebook prototype cannot handle tool or approval requests yet. Try asking a narrower question about the selected thread sources.",
+                    };
+                  }
+                  if (event.type === "runtime.error") {
+                    return {
+                      type: "error" as const,
+                      message: event.payload.message ?? "Notebook provider runtime failed.",
+                    };
+                  }
+                  return { type: "done" as const };
+                }),
+                Stream.filter((item) => item.type !== "delta" || item.delta.length > 0),
+                Stream.takeUntil((item) => item.type === "done" || item.type === "error"),
+              );
+
+              return Stream.merge(
+                Stream.fromEffect(sendTurn).pipe(Stream.drain),
+                runtimeItems,
+              ).pipe(
+                Stream.ensuring(
+                  providerService
+                    .stopSession({ threadId: input.threadId })
+                    .pipe(Effect.catch(() => Effect.void)),
+                ),
+              );
+            }),
             { "rpc.aggregate": "orchestration" },
           ),
         [ORCHESTRATION_WS_METHODS.replayEvents]: (input) =>

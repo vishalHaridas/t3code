@@ -20,6 +20,7 @@ export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
+  notebookTurn: "orchestration.notebookTurn",
   replayEvents: "orchestration.replayEvents",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
@@ -1165,6 +1166,29 @@ export type OrchestrationReplayEventsInput = typeof OrchestrationReplayEventsInp
 const OrchestrationReplayEventsResult = Schema.Array(OrchestrationEvent);
 export type OrchestrationReplayEventsResult = typeof OrchestrationReplayEventsResult.Type;
 
+export const OrchestrationNotebookTurnInput = Schema.Struct({
+  threadId: ThreadId,
+  cwd: TrimmedNonEmptyString,
+  modelSelection: ModelSelection,
+  prompt: TrimmedNonEmptyString.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS)),
+});
+export type OrchestrationNotebookTurnInput = typeof OrchestrationNotebookTurnInput.Type;
+
+export const OrchestrationNotebookTurnStreamItem = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("delta"),
+    delta: Schema.String,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("done"),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("error"),
+    message: TrimmedNonEmptyString,
+  }),
+]);
+export type OrchestrationNotebookTurnStreamItem = typeof OrchestrationNotebookTurnStreamItem.Type;
+
 export const OrchestrationRpcSchemas = {
   dispatchCommand: {
     input: ClientOrchestrationCommand,
@@ -1181,6 +1205,10 @@ export const OrchestrationRpcSchemas = {
   replayEvents: {
     input: OrchestrationReplayEventsInput,
     output: OrchestrationReplayEventsResult,
+  },
+  notebookTurn: {
+    input: OrchestrationNotebookTurnInput,
+    output: OrchestrationNotebookTurnStreamItem,
   },
   subscribeThread: {
     input: OrchestrationSubscribeThreadInput,

@@ -12,6 +12,7 @@ import {
   MessageId,
   OpenError,
   type OrchestrationThreadShell,
+  TurnId,
   TerminalNotRunningError,
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -79,6 +80,7 @@ import {
   ProviderRegistry,
   type ProviderRegistryShape,
 } from "./provider/Services/ProviderRegistry.ts";
+import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService.ts";
 import { ServerLifecycleEvents, type ServerLifecycleEventsShape } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup, type ServerRuntimeStartupShape } from "./serverRuntimeStartup.ts";
 import { ServerSettingsService, type ServerSettingsShape } from "./serverSettings.ts";
@@ -335,6 +337,7 @@ const buildAppUnderTest = (options?: {
     serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
     serverEnvironment?: Partial<ServerEnvironmentShape>;
     repositoryIdentityResolver?: Partial<RepositoryIdentityResolverShape>;
+    providerService?: Partial<ProviderServiceShape>;
   };
 }) =>
   Effect.gen(function* () {
@@ -422,6 +425,35 @@ const buildAppUnderTest = (options?: {
           refresh: () => Effect.succeed([]),
           streamChanges: Stream.empty,
           ...options?.layers?.providerRegistry,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(ProviderService)({
+          startSession: (_threadId, input) =>
+            Effect.succeed({
+              provider: input.provider ?? input.modelSelection?.provider ?? "codex",
+              status: "ready",
+              runtimeMode: input.runtimeMode,
+              cwd: input.cwd,
+              model: input.modelSelection?.model,
+              threadId: input.threadId,
+              createdAt: new Date(0).toISOString(),
+              updatedAt: new Date(0).toISOString(),
+            }),
+          sendTurn: (input) =>
+            Effect.succeed({
+              threadId: input.threadId,
+              turnId: TurnId.make("turn-test"),
+            }),
+          interruptTurn: () => Effect.void,
+          respondToRequest: () => Effect.void,
+          respondToUserInput: () => Effect.void,
+          stopSession: () => Effect.void,
+          listSessions: () => Effect.succeed([]),
+          getCapabilities: () => Effect.succeed({ sessionModelSwitch: "unsupported" }),
+          rollbackConversation: () => Effect.void,
+          streamEvents: Stream.empty,
+          ...options?.layers?.providerService,
         }),
       ),
       Layer.provide(
