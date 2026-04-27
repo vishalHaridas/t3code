@@ -15,9 +15,9 @@ import { readEnvironmentApi } from "../environmentApi";
 import { useSettings } from "../hooks/useSettings";
 import { newMessageId } from "../lib/utils";
 import { useNotebookModeStore } from "../notebookModeStore";
+import { prepareNotebookSources } from "../notebookRetrieval";
 import { selectProjectByRef, selectThreadByRef, useStore } from "../store";
 import { useServerConfig, useServerKeybindings } from "../rpc/serverState";
-import type { Thread } from "../types";
 import { ProviderModelPicker } from "./chat/ProviderModelPicker";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
@@ -25,38 +25,8 @@ import { Textarea } from "./ui/textarea";
 const NOTEBOOK_PROMPT_LIMIT = 110_000;
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 
-function formatNotebookSourceDump(threads: readonly Thread[]): string {
-  const lines: string[] = [
-    "# Selected T3 Code Threads",
-    "",
-    "Use only these selected thread messages as source material. The dump intentionally excludes tool calls, tool results, diffs, approvals, and system messages.",
-    "",
-  ];
-
-  threads.forEach((thread, threadIndex) => {
-    const messages = thread.messages.filter(
-      (message) => !message.streaming && (message.role === "user" || message.role === "assistant"),
-    );
-    lines.push(`## Source ${threadIndex + 1}: ${thread.title}`, "");
-    lines.push(`- Thread ID: ${thread.id}`);
-    lines.push(`- Created: ${thread.createdAt}`);
-    if (thread.updatedAt) {
-      lines.push(`- Updated: ${thread.updatedAt}`);
-    }
-    lines.push(`- Included messages: ${messages.length}`, "");
-
-    messages.forEach((message, messageIndex) => {
-      lines.push(`### ${messageIndex + 1}. ${message.role.toUpperCase()}`);
-      lines.push(`_Created: ${message.createdAt}_`, "");
-      lines.push(message.text.trim(), "");
-    });
-  });
-
-  return lines.join("\n").trim();
-}
-
 function buildNotebookPrompt(input: {
-  sourceDump: string;
+  preparedSource: string;
   notebookHistory: readonly { role: "user" | "assistant"; text: string }[];
   question: string;
 }): string {
@@ -66,9 +36,12 @@ function buildNotebookPrompt(input: {
 
   return [
     "You are in T3 Code Notebook mode. Answer questions about selected historical implementation threads.",
-    "Do not perform coding actions. Do not use tools. If the selected sources do not contain enough evidence, say what is missing.",
+    "Do not perform coding actions. Do not use tools.",
+    "Synthesize from the prepared source material. Make cautious inferences when the included conversation windows support them, and distinguish direct evidence from likely conclusions when that matters.",
+    "Answer in plain language. Do not mention source labels, thread IDs, message IDs, or retrieval windows in the response.",
+    "If important evidence is missing from the prepared source material, say what is missing.",
     "",
-    input.sourceDump,
+    input.preparedSource,
     "",
     history ? "## Notebook Chat So Far\n\n" + history + "\n" : "",
     "## Current Question",
@@ -162,16 +135,19 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
       )
     : (selectedThreads[0]?.modelSelection ?? project?.defaultModelSelection);
   const setModelSelection = useComposerDraftStore((state) => state.setModelSelection);
-  const sourceDump = useMemo(() => formatNotebookSourceDump(selectedThreads), [selectedThreads]);
+  const preparedSources = useMemo(
+    () => prepareNotebookSources(selectedThreads, question || " "),
+    [question, selectedThreads],
+  );
   const loadingSourceCount = selectedRefs.length - selectedThreads.length;
   const promptPreview = useMemo(
     () =>
       buildNotebookPrompt({
-        sourceDump,
+        preparedSource: preparedSources.promptSource,
         notebookHistory: notebookMessages.filter((message) => !message.streaming),
         question: question || " ",
       }),
-    [notebookMessages, question, sourceDump],
+    [notebookMessages, preparedSources.promptSource, question],
   );
   const promptTooLarge = promptPreview.length > NOTEBOOK_PROMPT_LIMIT;
   const canSubmit =
@@ -227,7 +203,7 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
       streaming: true,
     };
     const prompt = buildNotebookPrompt({
-      sourceDump,
+      preparedSource: preparedSources.promptSource,
       notebookHistory: notebookMessages.filter((message) => !message.streaming),
       question,
     });
@@ -266,10 +242,10 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
     failAssistantMessage,
     finishAssistantMessage,
     notebookMessages,
+    preparedSources.promptSource,
     project,
     question,
     selectedModelSelection,
-    sourceDump,
   ]);
 
   const sourceLabel =
@@ -329,7 +305,11 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
         <div className="mx-auto w-full max-w-4xl space-y-2">
           <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
             <span>
-              {sourceLabel} - {sourceDump.length.toLocaleString()} source chars
+              {sourceLabel} - {preparedSources.sourceChars.toLocaleString()} source chars
+              {" - "}
+              {preparedSources.estimatedTokens.toLocaleString()} est. prompt tokens
+              {" - "}
+              {preparedSources.mode === "complete" ? "complete source" : "retrieved source"}
               {promptTooLarge ? " - too large" : ""}
             </span>
             <ProviderModelPicker
