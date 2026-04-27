@@ -102,27 +102,19 @@ function highlightChunkText(text: string, terms: readonly string[]) {
 }
 
 function NotebookChunkExcerpt(props: { chunk: NotebookSearchChunk }) {
-  const timeRange =
-    props.chunk.startedAt === props.chunk.endedAt
-      ? formatNotebookTime(props.chunk.startedAt)
-      : `${formatNotebookTime(props.chunk.startedAt)} - ${formatNotebookTime(props.chunk.endedAt)}`;
-
   return (
     <article className="border-t border-border/60 first:border-t-0">
-      <div className="flex items-center gap-3 bg-muted/20 px-3 py-1.5 text-xs text-muted-foreground">
-        <span className="w-16 shrink-0 text-right font-mono">
-          {props.chunk.startOrdinal === props.chunk.endOrdinal
-            ? `M${props.chunk.startOrdinal}`
-            : `M${props.chunk.startOrdinal}-${props.chunk.endOrdinal}`}
-        </span>
-        <span className="h-px flex-1 bg-border/80" />
-        <span>{timeRange}</span>
-      </div>
+      <div className="h-px bg-border/80" />
       <div className="divide-y divide-border/40">
         {props.chunk.messages.map((message) => (
-          <div key={message.id} className="grid grid-cols-[4.25rem_1fr] gap-3 px-3 py-3">
-            <div className="select-none text-right text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-              {message.role}
+          <div key={message.id} className="grid grid-cols-[5.75rem_1fr] gap-3 px-3 py-3">
+            <div className="select-none text-right">
+              <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                {message.role}
+              </div>
+              <div className="mt-1 text-[10px] text-muted-foreground/70">
+                {formatNotebookTime(message.createdAt)}
+              </div>
             </div>
             <div className="min-w-0 text-sm leading-relaxed text-foreground/90">
               <div className="whitespace-pre-wrap">
@@ -201,10 +193,6 @@ function NotebookThreadFold(props: {
           <ChevronDownIcon className="size-4 text-muted-foreground" />
         )}
         <span className="min-w-0 flex-1 truncate font-medium">{props.thread.title}</span>
-        <span className="shrink-0 text-xs text-muted-foreground">
-          {props.thread.chunks.length} chunk
-          {props.thread.chunks.length === 1 ? "" : "s"}
-        </span>
       </button>
       {props.collapsed ? null : (
         <div>
@@ -589,15 +577,6 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
                     : "border-border bg-card"
                 }`}
               >
-                <div className="mb-3 flex justify-end text-xs text-muted-foreground">
-                  <span>
-                    {askResult.streaming
-                      ? "Working..."
-                      : askResult.sourceMode === "complete"
-                        ? "complete sources"
-                        : "retrieved sources"}
-                  </span>
-                </div>
                 {askResult.streaming ? (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Loader2Icon className="size-4 animate-spin" />
