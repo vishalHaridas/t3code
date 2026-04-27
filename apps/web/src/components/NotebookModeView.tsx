@@ -36,11 +36,13 @@ function buildNotebookPrompt(input: {
     .join("\n\n");
 
   return [
-    "You are in T3 Code Notebook mode. Answer questions about selected historical implementation threads.",
-    "Do not perform coding actions. Do not use tools.",
-    "Synthesize from the prepared source material. Make cautious inferences when the included conversation windows support them, and distinguish direct evidence from likely conclusions when that matters.",
-    "Answer in plain language. Do not mention source labels, thread IDs, message IDs, or retrieval windows in the response.",
-    "If important evidence is missing from the prepared source material, say what is missing.",
+    "You are answering questions about selected conversations between a user and an agent.",
+    "Use only the user/assistant messages provided below.",
+    "Important limits:",
+    "- You only know what appears in those messages.",
+    "- You do not know hidden tool calls, tool results, file changes, diffs, or system/runtime state unless they are explicitly described in the messages.",
+    "- Do not claim to have verified anything outside the provided conversation.",
+    "Answer the question directly. If the messages do not support a confident answer, say so briefly and state what is missing.",
     "",
     input.preparedSource,
     "",
