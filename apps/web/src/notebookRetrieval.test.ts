@@ -130,6 +130,8 @@ describe("prepareNotebookSearchResult", () => {
     expect(result.threads[0]?.title).toBe("Budget thread");
     expect(result.threads[0]?.chunks[0]?.matchedTerms).toContain("sourcecharbudget");
     expect(result.threads[0]?.chunks[0]?.text).toContain("sourceCharBudget");
+    expect(result.threads[0]?.chunks[0]?.messages[0]?.role).toBe("user");
+    expect(result.threads[0]?.chunks[0]?.startedAt).toBe("2026-04-25T00:00:01.000Z");
   });
 
   it("does not return complete sources when the full source would fit", () => {
@@ -151,5 +153,16 @@ describe("prepareNotebookSearchResult", () => {
 
     expect(result.queryTerms).toEqual(["websocket"]);
     expect(result.threads).toEqual([]);
+  });
+
+  it("matches query terms as token prefixes", () => {
+    const result = prepareNotebookSearchResult(
+      [thread([message(1, "user", "The tests and testing setup both passed.")])],
+      "test",
+    );
+
+    expect(result.threads).toHaveLength(1);
+    expect(result.threads[0]?.chunks[0]?.matchedTerms).toEqual(["test"]);
+    expect(result.threads[0]?.chunks[0]?.messages[0]?.matchedTerms).toEqual(["test"]);
   });
 });

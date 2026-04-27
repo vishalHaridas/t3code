@@ -71,12 +71,24 @@ export interface PreparedNotebookSource {
   promptSource: string;
 }
 
+export interface NotebookSearchChunkMessage {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  createdAt: string;
+  ordinal: number;
+  matchedTerms: string[];
+}
+
 export interface NotebookSearchChunk {
   id: string;
   text: string;
   startOrdinal: number;
   endOrdinal: number;
+  startedAt: string;
+  endedAt: string;
   matchedTerms: string[];
+  messages: NotebookSearchChunkMessage[];
 }
 
 export interface NotebookSearchThreadResult {
@@ -120,6 +132,9 @@ interface Segment {
   thread: Thread;
   startOrdinal: number;
   endOrdinal: number;
+  startedAt: string;
+  endedAt: string;
+  messages: NotebookMessage[];
   text: string;
   terms: Map<string, number>;
 }
@@ -232,6 +247,9 @@ function buildSegments(sources: readonly NotebookThreadSource[]): Segment[] {
         thread: source.thread,
         startOrdinal: first?.ordinal ?? 1,
         endOrdinal: last?.ordinal ?? first?.ordinal ?? 1,
+        startedAt: first?.createdAt ?? source.thread.createdAt,
+        endedAt: last?.createdAt ?? first?.createdAt ?? source.thread.createdAt,
+        messages: segmentMessages,
         text,
         terms: termCounts(text),
       });
@@ -283,7 +301,10 @@ function scoreSegment(
 ): number {
   let score = 0;
   for (const term of queryTerms) {
-    const frequency = segment.terms.get(term) ?? 0;
+    const frequency = [...segment.terms].reduce(
+      (total, [segmentTerm, count]) => total + (segmentTerm.startsWith(term) ? count : 0),
+      0,
+    );
     if (frequency > 0) {
       score += (1 + Math.log(frequency)) * (idf.get(term) ?? 1);
     }
@@ -302,8 +323,16 @@ function scoreSegment(
   return score;
 }
 
+function hasPrefixMatch(text: string, queryTerm: string): boolean {
+  return tokenize(text).some((term) => term.startsWith(queryTerm));
+}
+
+function matchedTextTerms(text: string, queryTerms: readonly string[]): string[] {
+  return queryTerms.filter((term) => hasPrefixMatch(text, term));
+}
+
 function matchedSegmentTerms(segment: Segment, queryTerms: readonly string[]): string[] {
-  return queryTerms.filter((term) => segment.terms.has(term));
+  return matchedTextTerms(segment.text, queryTerms);
 }
 
 function collectAnchors(sources: readonly NotebookThreadSource[], question: string): Anchor[] {
@@ -404,8 +433,8 @@ function selectSearchSegments(
   }
 
   // Search mode is intentionally stricter than Ask retrieval: it only shows
-  // windows that actually contain query terms, so the UI behaves like an IDE
-  // search instead of a semantic summary.
+  // windows with prefix token matches, so "test" finds "tests" and "testing"
+  // without drifting into fuzzy/semantic behavior.
   const selected = segments
     .map((segment) => ({
       segment,
@@ -431,7 +460,10 @@ function selectSearchSegments(
 
   return {
     segments: capped.toSorted(
-      (a, b) => a.threadIndex - b.threadIndex || a.startOrdinal - b.startOrdinal,
+      (a, b) =>
+        a.threadIndex - b.threadIndex ||
+        a.startedAt.localeCompare(b.startedAt) ||
+        a.startOrdinal - b.startOrdinal,
     ),
     queryTerms,
   };
@@ -546,13 +578,29 @@ export function prepareNotebookSearchResult(
         title: source.thread.title,
         createdAt: source.thread.createdAt,
         updatedAt: source.thread.updatedAt,
-        chunks: threadSegments.map((segment) => ({
-          id: `${source.thread.id}:${segment.startOrdinal}:${segment.endOrdinal}`,
-          text: segment.text,
-          startOrdinal: segment.startOrdinal,
-          endOrdinal: segment.endOrdinal,
-          matchedTerms: matchedSegmentTerms(segment, queryTerms),
-        })),
+        chunks: threadSegments
+          .toSorted(
+            (a, b) => a.startedAt.localeCompare(b.startedAt) || a.startOrdinal - b.startOrdinal,
+          )
+          .map((segment) => ({
+            id: `${source.thread.id}:${segment.startOrdinal}:${segment.endOrdinal}`,
+            text: segment.text,
+            startOrdinal: segment.startOrdinal,
+            endOrdinal: segment.endOrdinal,
+            startedAt: segment.startedAt,
+            endedAt: segment.endedAt,
+            matchedTerms: matchedSegmentTerms(segment, queryTerms),
+            // Keep message structure for the UI. It avoids parsing "### USER"
+            // text back into roles and lets Search reuse chat-like rendering.
+            messages: segment.messages.map((message) => ({
+              id: message.id,
+              role: message.role,
+              text: message.text,
+              createdAt: message.createdAt,
+              ordinal: message.ordinal,
+              matchedTerms: matchedTextTerms(message.text, queryTerms),
+            })),
+          })),
       },
     ];
   });
