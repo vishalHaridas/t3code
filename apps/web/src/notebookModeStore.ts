@@ -1,48 +1,72 @@
 import { create } from "zustand";
 
-export type NotebookChatRole = "user" | "assistant";
+import type { NotebookSearchResult } from "./notebookRetrieval";
 
-export interface NotebookChatMessage {
-  id: string;
-  role: NotebookChatRole;
+export type NotebookModeKind = "search" | "ask";
+
+export interface NotebookAskResult {
+  query: string;
   text: string;
-  createdAt: string;
-  streaming?: boolean;
+  streamingText: string;
+  streaming: boolean;
   error?: boolean;
+  sourceMode?: "complete" | "retrieved";
+  sources?: NotebookSearchResult | null;
 }
 
 interface NotebookModeState {
   activeProjectKey: string | null;
   selectedThreadKeys: ReadonlySet<string>;
-  messages: NotebookChatMessage[];
+  mode: NotebookModeKind;
+  lastSubmittedQuery: string;
+  searchResult: NotebookSearchResult | null;
+  askResult: NotebookAskResult | null;
   enter: (projectKey: string) => void;
   exit: () => void;
   toggleProject: (projectKey: string) => void;
+  setMode: (mode: NotebookModeKind) => void;
   toggleSourceThread: (threadKey: string) => void;
   clearSourceThreads: () => void;
-  appendMessage: (message: NotebookChatMessage) => void;
-  appendAssistantDelta: (messageId: string, delta: string) => void;
-  finishAssistantMessage: (messageId: string) => void;
-  failAssistantMessage: (messageId: string, text: string) => void;
+  clearResults: () => void;
+  setSearchResult: (query: string, result: NotebookSearchResult) => void;
+  startAsk: (
+    query: string,
+    options: {
+      sourceMode: "complete" | "retrieved";
+      sources: NotebookSearchResult | null;
+    },
+  ) => void;
+  appendAskDelta: (delta: string) => void;
+  finishAsk: () => void;
+  failAsk: (text: string) => void;
 }
 
 const emptySelection = () => new Set<string>();
 
-export const useNotebookModeStore = create<NotebookModeState>((set) => ({
+const blankResults = {
+  lastSubmittedQuery: "",
+  searchResult: null,
+  askResult: null,
+};
+
+export const useNotebookModeStore = create<NotebookModeState>((set, get) => ({
   activeProjectKey: null,
   selectedThreadKeys: emptySelection(),
-  messages: [],
+  mode: "search",
+  ...blankResults,
   enter: (projectKey) =>
     set({
       activeProjectKey: projectKey,
       selectedThreadKeys: emptySelection(),
-      messages: [],
+      mode: "search",
+      ...blankResults,
     }),
   exit: () =>
     set({
       activeProjectKey: null,
       selectedThreadKeys: emptySelection(),
-      messages: [],
+      mode: "search",
+      ...blankResults,
     }),
   toggleProject: (projectKey) =>
     set((state) =>
@@ -50,16 +74,28 @@ export const useNotebookModeStore = create<NotebookModeState>((set) => ({
         ? {
             activeProjectKey: null,
             selectedThreadKeys: emptySelection(),
-            messages: [],
+            mode: "search",
+            ...blankResults,
           }
         : {
             activeProjectKey: projectKey,
             selectedThreadKeys: emptySelection(),
-            messages: [],
+            mode: "search",
+            ...blankResults,
           },
     ),
+  setMode: (mode) => {
+    if (get().askResult?.streaming) return;
+    set({ mode });
+  },
   toggleSourceThread: (threadKey) =>
     set((state) => {
+      // Source selection defines the result universe. Once a result exists, the
+      // sidebar is locked until the query is cleared so stale chunks cannot look
+      // like they came from the current selection.
+      if (state.searchResult || state.askResult || state.lastSubmittedQuery) {
+        return state;
+      }
       const next = new Set(state.selectedThreadKeys);
       if (next.has(threadKey)) {
         next.delete(threadKey);
@@ -69,26 +105,55 @@ export const useNotebookModeStore = create<NotebookModeState>((set) => ({
       return { selectedThreadKeys: next };
     }),
   clearSourceThreads: () => set({ selectedThreadKeys: emptySelection() }),
-  appendMessage: (message) =>
+  clearResults: () => set(blankResults),
+  setSearchResult: (query, result) =>
+    set({
+      lastSubmittedQuery: query,
+      searchResult: result,
+      askResult: null,
+    }),
+  startAsk: (query, options) =>
+    set({
+      lastSubmittedQuery: query,
+      searchResult: null,
+      askResult: {
+        query,
+        text: "",
+        streamingText: "",
+        streaming: true,
+        sourceMode: options.sourceMode,
+        sources: options.sources,
+      },
+    }),
+  appendAskDelta: (delta) =>
     set((state) => ({
-      messages: [...state.messages, message],
+      askResult: state.askResult
+        ? {
+            ...state.askResult,
+            streamingText: state.askResult.streamingText + delta,
+          }
+        : null,
     })),
-  appendAssistantDelta: (messageId, delta) =>
+  finishAsk: () =>
     set((state) => ({
-      messages: state.messages.map((message) =>
-        message.id === messageId ? { ...message, text: message.text + delta } : message,
-      ),
+      askResult: state.askResult
+        ? {
+            ...state.askResult,
+            text: state.askResult.streamingText,
+            streaming: false,
+          }
+        : null,
     })),
-  finishAssistantMessage: (messageId) =>
+  failAsk: (text) =>
     set((state) => ({
-      messages: state.messages.map((message) =>
-        message.id === messageId ? { ...message, streaming: false } : message,
-      ),
-    })),
-  failAssistantMessage: (messageId, text) =>
-    set((state) => ({
-      messages: state.messages.map((message) =>
-        message.id === messageId ? { ...message, text, streaming: false, error: true } : message,
-      ),
+      askResult: state.askResult
+        ? {
+            ...state.askResult,
+            text,
+            streamingText: text,
+            streaming: false,
+            error: true,
+          }
+        : null,
     })),
 }));

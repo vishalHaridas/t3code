@@ -330,6 +330,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const isNotebookSourceSelected = useNotebookModeStore((state) =>
     state.selectedThreadKeys.has(threadKey),
   );
+  const notebookSourcesLocked = useNotebookModeStore(
+    (state) =>
+      Boolean(state.searchResult || state.askResult || state.lastSubmittedQuery) ||
+      state.askResult?.streaming === true,
+  );
   const toggleNotebookSourceThread = useNotebookModeStore((state) => state.toggleSourceThread);
   const hasSelection = useThreadSelectionStore((state) => state.selectedThreadKeys.size > 0);
   const runningTerminalIds = useTerminalStateStore(
@@ -407,6 +412,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       if (notebookModeActive) {
         event.preventDefault();
         event.stopPropagation();
+        if (notebookSourcesLocked) return;
         toggleNotebookSourceThread(threadKey);
         return;
       }
@@ -419,6 +425,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       threadKey,
       threadRef,
       toggleNotebookSourceThread,
+      notebookSourcesLocked,
     ],
   );
   const handleRowKeyDown = useCallback(
@@ -426,12 +433,20 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
       if (notebookModeActive) {
+        if (notebookSourcesLocked) return;
         toggleNotebookSourceThread(threadKey);
         return;
       }
       navigateToThread(threadRef);
     },
-    [navigateToThread, notebookModeActive, threadKey, threadRef, toggleNotebookSourceThread],
+    [
+      navigateToThread,
+      notebookModeActive,
+      threadKey,
+      threadRef,
+      toggleNotebookSourceThread,
+      notebookSourcesLocked,
+    ],
   );
   const handleRowContextMenu = useCallback(
     (event: React.MouseEvent) => {
@@ -590,11 +605,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 isNotebookSourceSelected
                   ? "border-primary bg-primary text-primary-foreground"
                   : "border-border bg-background text-muted-foreground hover:text-foreground"
-              }`}
+              } ${notebookSourcesLocked ? "cursor-not-allowed opacity-45" : ""}`}
+              disabled={notebookSourcesLocked}
               onPointerDown={stopPropagationOnPointerDown}
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
+                if (notebookSourcesLocked) return;
                 toggleNotebookSourceThread(threadKey);
               }}
             >

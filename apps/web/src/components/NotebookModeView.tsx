@@ -1,8 +1,20 @@
-import type { ModelSelection, ProjectId, ProviderKind, ServerProvider } from "@t3tools/contracts";
+import type {
+  ModelSelection,
+  ProjectId,
+  ProviderKind,
+  ServerProvider,
+} from "@t3tools/contracts";
 import { ThreadId as ThreadIdSchema } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime";
 import { createModelSelection } from "@t3tools/shared/model";
-import { SendIcon, XIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  ChevronRightIcon,
+  Loader2Icon,
+  SearchIcon,
+  SendIcon,
+  XIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 
@@ -13,11 +25,18 @@ import {
 } from "../composerDraftStore";
 import { readEnvironmentApi } from "../environmentApi";
 import { useSettings } from "../hooks/useSettings";
-import { newMessageId } from "../lib/utils";
 import { useNotebookModeStore } from "../notebookModeStore";
-import { prepareNotebookSources } from "../notebookRetrieval";
-import { selectProjectByRef, selectThreadByRef, useStore } from "../store";
+import type {
+  NotebookSearchResult,
+  NotebookSearchThreadResult,
+} from "../notebookRetrieval";
+import {
+  prepareNotebookSearchResult,
+  prepareNotebookSources,
+} from "../notebookRetrieval";
 import { useServerConfig, useServerKeybindings } from "../rpc/serverState";
+import { selectProjectByRef, selectThreadByRef, useStore } from "../store";
+import ChatMarkdown from "./ChatMarkdown";
 import { ProviderModelPicker } from "./chat/ProviderModelPicker";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
@@ -28,15 +47,10 @@ const EMPTY_PROVIDERS: ServerProvider[] = [];
 
 function buildNotebookPrompt(input: {
   preparedSource: string;
-  notebookHistory: readonly { role: "user" | "assistant"; text: string }[];
   question: string;
 }): string {
-  const history = input.notebookHistory
-    .map((message) => `${message.role.toUpperCase()}:\n${message.text.trim()}`)
-    .join("\n\n");
-
   return [
-    "You are answering questions about selected conversations between a user and an agent.",
+    "You are answering a one-shot question about selected conversations between a user and an agent.",
     "Use only the user/assistant messages provided below.",
     "Important limits:",
     "- You only know what appears in those messages.",
@@ -46,8 +60,7 @@ function buildNotebookPrompt(input: {
     "",
     input.preparedSource,
     "",
-    history ? "## Notebook Chat So Far\n\n" + history + "\n" : "",
-    "## Current Question",
+    "## Question",
     input.question.trim(),
   ]
     .filter(Boolean)
@@ -56,35 +69,184 @@ function buildNotebookPrompt(input: {
 
 function modelOptionsByProvider(providers: readonly ServerProvider[]) {
   return {
-    codex: providers.find((provider) => provider.provider === "codex")?.models ?? [],
-    claudeAgent: providers.find((provider) => provider.provider === "claudeAgent")?.models ?? [],
-    cursor: providers.find((provider) => provider.provider === "cursor")?.models ?? [],
-    opencode: providers.find((provider) => provider.provider === "opencode")?.models ?? [],
-  } satisfies Record<ProviderKind, ReadonlyArray<ServerProvider["models"][number]>>;
+    codex:
+      providers.find((provider) => provider.provider === "codex")?.models ?? [],
+    claudeAgent:
+      providers.find((provider) => provider.provider === "claudeAgent")
+        ?.models ?? [],
+    cursor:
+      providers.find((provider) => provider.provider === "cursor")?.models ??
+      [],
+    opencode:
+      providers.find((provider) => provider.provider === "opencode")?.models ??
+      [],
+  } satisfies Record<
+    ProviderKind,
+    ReadonlyArray<ServerProvider["models"][number]>
+  >;
+}
+
+function highlightChunkText(text: string, terms: readonly string[]) {
+  if (terms.length === 0) return text;
+  const escapedTerms = terms.map((term) =>
+    term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+  );
+  const pattern = new RegExp(`(${escapedTerms.join("|")})`, "gi");
+  let highlightIndex = 0;
+  return text.split(pattern).map((part) =>
+    terms.some((term) => term.toLowerCase() === part.toLowerCase()) ? (
+      <mark
+        key={`${part.toLowerCase()}:${highlightIndex++}`}
+        className="rounded-sm bg-primary/25 px-0.5 text-foreground"
+      >
+        {part}
+      </mark>
+    ) : (
+      part
+    ),
+  );
+}
+
+function NotebookSearchResults(props: {
+  result: NotebookSearchResult;
+  title?: string;
+  defaultCollapsed?: boolean;
+}) {
+  const [collapsedThreads, setCollapsedThreads] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+
+  if (props.result.threads.length === 0) {
+    return (
+      <div className="rounded-lg border border-dashed border-border p-5 text-sm text-muted-foreground">
+        No matches in selected threads.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {props.title ? (
+        <div className="text-xs font-medium uppercase text-muted-foreground">
+          {props.title}
+        </div>
+      ) : null}
+      {props.result.threads.map((thread) => {
+        const collapsed =
+          collapsedThreads.has(String(thread.threadId)) ||
+          (props.defaultCollapsed ?? false);
+        return (
+          <NotebookThreadFold
+            key={String(thread.threadId)}
+            thread={thread}
+            queryTerms={props.result.queryTerms}
+            collapsed={collapsed}
+            onToggle={() => {
+              setCollapsedThreads((current) => {
+                const next = new Set(current);
+                const key = String(thread.threadId);
+                if (next.has(key)) {
+                  next.delete(key);
+                } else {
+                  next.add(key);
+                }
+                return next;
+              });
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function NotebookThreadFold(props: {
+  thread: NotebookSearchThreadResult;
+  queryTerms: readonly string[];
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <section className="overflow-hidden rounded-lg border border-border bg-card/40">
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 border-b border-border/70 bg-muted/30 px-3 py-2 text-left text-sm"
+        onClick={props.onToggle}
+      >
+        {props.collapsed ? (
+          <ChevronRightIcon className="size-4 text-muted-foreground" />
+        ) : (
+          <ChevronDownIcon className="size-4 text-muted-foreground" />
+        )}
+        <span className="min-w-0 flex-1 truncate font-medium">
+          {props.thread.title}
+        </span>
+        <span className="shrink-0 text-xs text-muted-foreground">
+          {props.thread.chunks.length} chunk
+          {props.thread.chunks.length === 1 ? "" : "s"}
+        </span>
+      </button>
+      {props.collapsed ? null : (
+        <div className="divide-y divide-border/60">
+          {props.thread.chunks.map((chunk) => (
+            <article
+              key={chunk.id}
+              className="grid grid-cols-[4.25rem_1fr] gap-3 px-3 py-3"
+            >
+              <div className="select-none text-right font-mono text-xs text-muted-foreground">
+                {chunk.startOrdinal === chunk.endOrdinal
+                  ? `M${chunk.startOrdinal}`
+                  : `M${chunk.startOrdinal}-${chunk.endOrdinal}`}
+              </div>
+              <pre className="min-w-0 whitespace-pre-wrap font-mono text-sm leading-relaxed text-foreground/90">
+                {highlightChunkText(chunk.text, chunk.matchedTerms)}
+              </pre>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
 }
 
 export function NotebookModeView(props: { projectId: ProjectId }) {
-  const activeProjectKey = useNotebookModeStore((state) => state.activeProjectKey);
-  const selectedThreadKeys = useNotebookModeStore((state) => state.selectedThreadKeys);
-  const notebookMessages = useNotebookModeStore((state) => state.messages);
-  const appendMessage = useNotebookModeStore((state) => state.appendMessage);
-  const appendAssistantDelta = useNotebookModeStore((state) => state.appendAssistantDelta);
-  const finishAssistantMessage = useNotebookModeStore((state) => state.finishAssistantMessage);
-  const failAssistantMessage = useNotebookModeStore((state) => state.failAssistantMessage);
+  const activeProjectKey = useNotebookModeStore(
+    (state) => state.activeProjectKey,
+  );
+  const selectedThreadKeys = useNotebookModeStore(
+    (state) => state.selectedThreadKeys,
+  );
+  const mode = useNotebookModeStore((state) => state.mode);
+  const searchResult = useNotebookModeStore((state) => state.searchResult);
+  const askResult = useNotebookModeStore((state) => state.askResult);
+  const setMode = useNotebookModeStore((state) => state.setMode);
+  const clearResults = useNotebookModeStore((state) => state.clearResults);
+  const setSearchResult = useNotebookModeStore(
+    (state) => state.setSearchResult,
+  );
+  const startAsk = useNotebookModeStore((state) => state.startAsk);
+  const appendAskDelta = useNotebookModeStore((state) => state.appendAskDelta);
+  const finishAsk = useNotebookModeStore((state) => state.finishAsk);
+  const failAsk = useNotebookModeStore((state) => state.failAsk);
   const exitNotebookMode = useNotebookModeStore((state) => state.exit);
   const selectedRefs = useMemo(
-    () => [...selectedThreadKeys].flatMap((key) => parseScopedThreadKey(key) ?? []),
+    () =>
+      [...selectedThreadKeys].flatMap((key) => parseScopedThreadKey(key) ?? []),
     [selectedThreadKeys],
   );
   const releaseDetailSubscriptionsRef = useRef<ReadonlyArray<() => void>>([]);
   const [question, setQuestion] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [streamUnsubscribe, setStreamUnsubscribe] = useState<(() => void) | null>(null);
+  const [streamUnsubscribe, setStreamUnsubscribe] = useState<
+    (() => void) | null
+  >(null);
   const settings = useSettings();
   const keybindings = useServerKeybindings();
   const serverConfig = useServerConfig();
   const providers = serverConfig?.providers ?? EMPTY_PROVIDERS;
-  const providerModels = useMemo(() => modelOptionsByProvider(providers), [providers]);
+  const providerModels = useMemo(
+    () => modelOptionsByProvider(providers),
+    [providers],
+  );
   const project = useStore(
     useMemo(
       () => (state) => {
@@ -137,23 +299,23 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
         effectiveModelState.modelOptions?.[selectedProvider],
       )
     : (selectedThreads[0]?.modelSelection ?? project?.defaultModelSelection);
-  const setModelSelection = useComposerDraftStore((state) => state.setModelSelection);
-  const notebookHistory = useMemo(
-    () => notebookMessages.filter((message) => !message.streaming),
-    [notebookMessages],
+  const setModelSelection = useComposerDraftStore(
+    (state) => state.setModelSelection,
   );
+
   const sourceCharBudget = useMemo(() => {
     const promptWithoutSources = buildNotebookPrompt({
       preparedSource: "",
-      notebookHistory,
       question: question || " ",
     });
     return Math.max(
       0,
-      NOTEBOOK_PROMPT_LIMIT - promptWithoutSources.length - NOTEBOOK_SOURCE_BUDGET_SAFETY_MARGIN,
+      NOTEBOOK_PROMPT_LIMIT -
+        promptWithoutSources.length -
+        NOTEBOOK_SOURCE_BUDGET_SAFETY_MARGIN,
     );
-  }, [notebookHistory, question]);
-  const preparedSources = useMemo(
+  }, [question]);
+  const preparedAskSources = useMemo(
     () =>
       prepareNotebookSources(selectedThreads, question || " ", {
         sourceCharBudget,
@@ -164,32 +326,36 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
   const promptPreview = useMemo(
     () =>
       buildNotebookPrompt({
-        preparedSource: preparedSources.promptSource,
-        notebookHistory,
+        preparedSource: preparedAskSources.promptSource,
         question: question || " ",
       }),
-    [notebookHistory, preparedSources.promptSource, question],
+    [preparedAskSources.promptSource, question],
   );
   const promptTooLarge = promptPreview.length > NOTEBOOK_PROMPT_LIMIT;
+  const askInFlight = askResult?.streaming === true;
+  const hasResult = Boolean(searchResult || askResult);
+  const mutableControlsDisabled = askInFlight;
   const canSubmit =
     selectedRefs.length > 0 &&
     loadingSourceCount === 0 &&
     question.trim().length > 0 &&
-    !busy &&
+    !askInFlight &&
     !promptTooLarge &&
     Boolean(project?.cwd) &&
-    Boolean(selectedModelSelection);
+    (mode === "search" || Boolean(selectedModelSelection));
 
   useEffect(() => {
     let cancelled = false;
 
-    void import("../environments/runtime/service").then(({ retainThreadDetailSubscription }) => {
-      if (cancelled) return;
-      releaseDetailSubscriptionsRef.current.forEach((release) => release());
-      releaseDetailSubscriptionsRef.current = selectedRefs.map((ref) =>
-        retainThreadDetailSubscription(ref.environmentId, ref.threadId),
-      );
-    });
+    void import("../environments/runtime/service").then(
+      ({ retainThreadDetailSubscription }) => {
+        if (cancelled) return;
+        releaseDetailSubscriptionsRef.current.forEach((release) => release());
+        releaseDetailSubscriptionsRef.current = selectedRefs.map((ref) =>
+          retainThreadDetailSubscription(ref.environmentId, ref.threadId),
+        );
+      },
+    );
 
     return () => {
       cancelled = true;
@@ -204,35 +370,44 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
     };
   }, [streamUnsubscribe]);
 
-  const submit = useCallback(() => {
-    if (!canSubmit || !project || !selectedModelSelection) return;
+  const submitSearch = useCallback(() => {
+    const query = question.trim();
+    if (!canSubmit || query.length === 0) return;
+    // Search is pure client-side retrieval. It clears any prior answer/result
+    // and replaces it with the folded chunk result for this query.
+    const result = prepareNotebookSearchResult(selectedThreads, query);
+    setSearchResult(query, result);
+  }, [canSubmit, question, selectedThreads, setSearchResult]);
+
+  const submitAsk = useCallback(() => {
+    const query = question.trim();
+    if (!canSubmit || !project || !selectedModelSelection || query.length === 0)
+      return;
     const api = readEnvironmentApi(project.environmentId);
     if (!api) return;
 
-    const now = new Date().toISOString();
-    const userMessage = {
-      id: newMessageId(),
-      role: "user" as const,
-      text: question.trim(),
-      createdAt: now,
-    };
-    const assistantMessage = {
-      id: newMessageId(),
-      role: "assistant" as const,
-      text: "",
-      createdAt: now,
-      streaming: true,
-    };
+    const visibleSources = prepareNotebookSearchResult(selectedThreads, query);
+    if (
+      preparedAskSources.mode === "retrieved" &&
+      visibleSources.threads.length === 0
+    ) {
+      startAsk(query, {
+        sourceMode: preparedAskSources.mode,
+        sources: visibleSources,
+      });
+      failAsk("No matching sources were found in the selected threads.");
+      return;
+    }
+
     const prompt = buildNotebookPrompt({
-      preparedSource: preparedSources.promptSource,
-      notebookHistory,
-      question,
+      preparedSource: preparedAskSources.promptSource,
+      question: query,
     });
 
-    appendMessage(userMessage);
-    appendMessage(assistantMessage);
-    setQuestion("");
-    setBusy(true);
+    startAsk(query, {
+      sourceMode: preparedAskSources.mode,
+      sources: visibleSources,
+    });
 
     const unsubscribe = api.orchestration.notebookTurn(
       {
@@ -242,32 +417,51 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
         prompt,
       },
       (event) => {
+        // The provider streams deltas, but this UI intentionally buffers them
+        // so Ask mode behaves like a one-shot result instead of a chat stream.
         if (event.type === "delta") {
-          appendAssistantDelta(assistantMessage.id, event.delta);
+          appendAskDelta(event.delta);
           return;
         }
         if (event.type === "error") {
-          failAssistantMessage(assistantMessage.id, event.message);
-          setBusy(false);
+          failAsk(event.message);
           return;
         }
-        finishAssistantMessage(assistantMessage.id);
-        setBusy(false);
+        finishAsk();
       },
     );
     setStreamUnsubscribe(() => unsubscribe);
   }, [
-    appendAssistantDelta,
-    appendMessage,
+    appendAskDelta,
     canSubmit,
-    failAssistantMessage,
-    finishAssistantMessage,
-    notebookHistory,
-    preparedSources.promptSource,
+    failAsk,
+    finishAsk,
+    preparedAskSources.mode,
+    preparedAskSources.promptSource,
     project,
     question,
     selectedModelSelection,
+    selectedThreads,
+    startAsk,
   ]);
+
+  const submit = useCallback(() => {
+    if (mode === "search") {
+      submitSearch();
+      return;
+    }
+    submitAsk();
+  }, [mode, submitAsk, submitSearch]);
+
+  const handleQuestionChange = useCallback(
+    (value: string) => {
+      setQuestion(value);
+      if (value.trim().length === 0) {
+        clearResults();
+      }
+    },
+    [clearResults],
+  );
 
   const sourceLabel =
     selectedRefs.length === 0
@@ -282,96 +476,204 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-sm font-medium">Notebook mode</h2>
           <p className="truncate text-xs text-muted-foreground">
-            Raw prototype over selected user/assistant thread messages
+            Search selected threads locally, or ask a model-backed question.
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={exitNotebookMode}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={exitNotebookMode}
+          disabled={askInFlight}
+        >
           <XIcon className="size-3.5" />
           Exit
         </Button>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-        <div className="mx-auto flex w-full max-w-4xl flex-col gap-3">
-          {notebookMessages.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border p-5 text-sm text-muted-foreground">
-              Select one or more threads in the current project, then ask about implementation
-              history, pivots, bugs, or refactors.
+      <div className="shrink-0 border-b border-border px-5 py-4">
+        <div className="mx-auto flex w-full max-w-5xl flex-col gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="inline-flex rounded-lg border border-border bg-muted/30 p-1">
+              {(["search", "ask"] as const).map((candidate) => (
+                <button
+                  key={candidate}
+                  type="button"
+                  className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                    mode === candidate
+                      ? "bg-background text-foreground shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  disabled={mutableControlsDisabled}
+                  onClick={() => setMode(candidate)}
+                >
+                  {candidate === "search" ? "Search" : "Ask"}
+                </button>
+              ))}
             </div>
-          ) : (
-            notebookMessages.map((message) => (
-              <div
-                key={message.id}
-                className={`rounded-lg border p-3 text-sm ${
-                  message.role === "user"
-                    ? "ml-auto max-w-[80%] border-primary/30 bg-primary/10"
-                    : message.error
-                      ? "mr-auto max-w-[88%] border-destructive/30 bg-destructive/10"
-                      : "mr-auto max-w-[88%] border-border bg-card"
-                }`}
+            <div className={mode === "search" ? "opacity-55" : ""}>
+              <ProviderModelPicker
+                compact
+                provider={selectedProvider}
+                model={effectiveModelState.selectedModel}
+                lockedProvider={null}
+                providers={providers}
+                keybindings={keybindings}
+                modelOptionsByProvider={providerModels}
+                onProviderModelChange={(provider, model) => {
+                  if (askInFlight) return;
+                  setModelSelection(
+                    draftId,
+                    createModelSelection(provider, model),
+                  );
+                }}
+              />
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-input bg-card p-2 shadow-xs">
+            <div className="flex gap-2">
+              <Textarea
+                value={question}
+                onChange={(event) => handleQuestionChange(event.target.value)}
+                placeholder={
+                  selectedRefs.length === 0
+                    ? "Select thread sources from the sidebar first"
+                    : mode === "search"
+                      ? "Search selected threads"
+                      : "Ask about selected threads"
+                }
+                className="min-h-20 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0"
+                disabled={askInFlight}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    submit();
+                  }
+                }}
+              />
+              <Button
+                className="self-end"
+                disabled={!canSubmit}
+                onClick={submit}
               >
-                <div className="mb-1 text-[10px] font-medium uppercase text-muted-foreground">
-                  {message.role}
-                </div>
-                <div className="whitespace-pre-wrap leading-relaxed">
-                  {message.text || (message.streaming ? "Thinking..." : "")}
-                </div>
-              </div>
-            ))
-          )}
+                {askInFlight ? (
+                  <Loader2Icon className="size-4 animate-spin" />
+                ) : mode === "search" ? (
+                  <SearchIcon className="size-4" />
+                ) : (
+                  <SendIcon className="size-4" />
+                )}
+              </Button>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            <span>{sourceLabel}</span>
+            <span>-</span>
+            <span>
+              {preparedAskSources.sourceChars.toLocaleString()} source chars
+            </span>
+            <span>-</span>
+            <span>
+              {preparedAskSources.estimatedTokens.toLocaleString()} est. ask
+              tokens
+            </span>
+            <span>-</span>
+            <span>
+              {preparedAskSources.mode === "complete"
+                ? "complete ask source"
+                : "retrieved ask source"}
+            </span>
+            {hasResult ? (
+              <>
+                <span>-</span>
+                <span>clear the query to change sources</span>
+              </>
+            ) : null}
+            {promptTooLarge ? (
+              <>
+                <span>-</span>
+                <span className="text-destructive">ask prompt too large</span>
+              </>
+            ) : null}
+          </div>
         </div>
       </div>
 
-      <div className="shrink-0 border-t border-border px-5 py-3">
-        <div className="mx-auto w-full max-w-4xl space-y-2">
-          <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-            <span>
-              {sourceLabel} - {preparedSources.sourceChars.toLocaleString()} source chars
-              {" - "}
-              {preparedSources.estimatedTokens.toLocaleString()} est. prompt tokens
-              {" - "}
-              {preparedSources.sourceCharBudget.toLocaleString()} source char budget
-              {" - "}
-              {preparedSources.mode === "complete" ? "complete source" : "retrieved source"}
-              {promptTooLarge ? " - too large" : ""}
-            </span>
-            <ProviderModelPicker
-              compact
-              provider={selectedProvider}
-              model={effectiveModelState.selectedModel}
-              lockedProvider={null}
-              providers={providers}
-              keybindings={keybindings}
-              modelOptionsByProvider={providerModels}
-              onProviderModelChange={(provider, model) => {
-                setModelSelection(draftId, createModelSelection(provider, model));
-              }}
-            />
-          </div>
-          <div className="flex gap-2">
-            <Textarea
-              value={question}
-              onChange={(event) => setQuestion(event.target.value)}
-              placeholder={
-                selectedRefs.length === 0
-                  ? "Select thread sources from the sidebar first"
-                  : "Ask about the selected implementation threads"
-              }
-              className="min-h-24 resize-none"
-              disabled={busy}
-              onKeyDown={(event) => {
-                if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-                  event.preventDefault();
-                  submit();
-                }
-              }}
-            />
-            <Button className="self-end" disabled={!canSubmit} onClick={submit}>
-              <SendIcon className="size-4" />
-            </Button>
-          </div>
+      <main className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        <div className="mx-auto w-full max-w-5xl">
+          {!searchResult && !askResult ? (
+            <div className="rounded-lg border border-dashed border-border p-5 text-sm text-muted-foreground">
+              Select one or more threads, enter a query, then run Search for
+              folded chunks or Ask for one model-backed answer.
+            </div>
+          ) : null}
+
+          {searchResult ? (
+            <NotebookSearchResults result={searchResult} />
+          ) : null}
+
+          {askResult ? (
+            <div className="space-y-3">
+              <section
+                className={`rounded-lg border p-4 ${
+                  askResult.error
+                    ? "border-destructive/30 bg-destructive/10"
+                    : "border-border bg-card"
+                }`}
+              >
+                <div className="mb-3 flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                  <span className="truncate">Ask: {askResult.query}</span>
+                  <span>
+                    {askResult.streaming
+                      ? "Working..."
+                      : askResult.sourceMode === "complete"
+                        ? "complete sources"
+                        : "retrieved sources"}
+                  </span>
+                </div>
+                {askResult.streaming ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2Icon className="size-4 animate-spin" />
+                    Waiting for the complete answer...
+                  </div>
+                ) : askResult.error ? (
+                  <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                    {askResult.text}
+                  </div>
+                ) : (
+                  <ChatMarkdown
+                    text={askResult.text}
+                    cwd={project?.cwd}
+                    isStreaming={false}
+                  />
+                )}
+              </section>
+
+              {askResult.sources && !askResult.streaming ? (
+                <details className="rounded-lg border border-border bg-card/40">
+                  <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
+                    Sources
+                  </summary>
+                  <div className="border-t border-border p-3">
+                    {askResult.sourceMode === "complete" ? (
+                      <div className="text-sm text-muted-foreground">
+                        Ask used complete selected thread messages because they
+                        fit the prompt budget.
+                      </div>
+                    ) : (
+                      <NotebookSearchResults
+                        result={askResult.sources}
+                        title="Retrieved chunks sent to Ask"
+                      />
+                    )}
+                  </div>
+                </details>
+              ) : null}
+            </div>
+          ) : null}
         </div>
-      </div>
+      </main>
     </div>
   );
 }

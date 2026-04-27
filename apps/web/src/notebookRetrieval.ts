@@ -71,6 +71,32 @@ export interface PreparedNotebookSource {
   promptSource: string;
 }
 
+export interface NotebookSearchChunk {
+  id: string;
+  text: string;
+  startOrdinal: number;
+  endOrdinal: number;
+  matchedTerms: string[];
+}
+
+export interface NotebookSearchThreadResult {
+  threadId: Thread["id"];
+  title: string;
+  createdAt: string;
+  updatedAt?: string | undefined;
+  chunks: NotebookSearchChunk[];
+}
+
+export interface NotebookSearchResult {
+  query: string;
+  queryTerms: string[];
+  threadCount: number;
+  messageCount: number;
+  sourceChars: number;
+  estimatedTokens: number;
+  threads: NotebookSearchThreadResult[];
+}
+
 interface PrepareNotebookSourcesOptions {
   sourceCharBudget?: number;
 }
@@ -276,6 +302,10 @@ function scoreSegment(
   return score;
 }
 
+function matchedSegmentTerms(segment: Segment, queryTerms: readonly string[]): string[] {
+  return queryTerms.filter((term) => segment.terms.has(term));
+}
+
 function collectAnchors(sources: readonly NotebookThreadSource[], question: string): Anchor[] {
   if (!queryWantsFuturePlans(question)) return [];
 
@@ -362,6 +392,51 @@ function selectSegments(
   };
 }
 
+function selectSearchSegments(
+  sources: readonly NotebookThreadSource[],
+  query: string,
+): { segments: Segment[]; queryTerms: string[] } {
+  const segments = buildSegments(sources);
+  const idf = inverseDocumentFrequency(segments);
+  const queryTerms = [...new Set(tokenize(query))];
+  if (queryTerms.length === 0) {
+    return { segments: [], queryTerms };
+  }
+
+  // Search mode is intentionally stricter than Ask retrieval: it only shows
+  // windows that actually contain query terms, so the UI behaves like an IDE
+  // search instead of a semantic summary.
+  const selected = segments
+    .map((segment) => ({
+      segment,
+      score: scoreSegment(segment, queryTerms, idf, query),
+      matchedTerms: matchedSegmentTerms(segment, queryTerms),
+    }))
+    .filter((item) => item.score > 0 && item.matchedTerms.length > 0)
+    .toSorted(
+      (a, b) =>
+        a.segment.threadIndex - b.segment.threadIndex ||
+        b.score - a.score ||
+        a.segment.startOrdinal - b.segment.startOrdinal,
+    );
+
+  const perThreadCount = new Map<number, number>();
+  const capped: Segment[] = [];
+  for (const item of selected) {
+    const count = perThreadCount.get(item.segment.threadIndex) ?? 0;
+    if (count >= MAX_SEGMENTS_PER_THREAD) continue;
+    perThreadCount.set(item.segment.threadIndex, count + 1);
+    capped.push(item.segment);
+  }
+
+  return {
+    segments: capped.toSorted(
+      (a, b) => a.threadIndex - b.threadIndex || a.startOrdinal - b.startOrdinal,
+    ),
+    queryTerms,
+  };
+}
+
 function formatRetrievedSources(input: {
   sources: readonly NotebookThreadSource[];
   question: string;
@@ -441,5 +516,59 @@ export function prepareNotebookSources(
     estimatedTokens: approximateTokens(promptSource.length),
     mode: "retrieved",
     promptSource,
+  };
+}
+
+export function prepareNotebookSearchResult(
+  threads: readonly Thread[],
+  query: string,
+): NotebookSearchResult {
+  const sources = makeThreadSources(threads);
+  const sourceChars = sources.reduce((total, source) => total + source.text.length, 0);
+  const messageCount = sources.reduce((total, source) => total + source.messages.length, 0);
+  const { segments, queryTerms } = selectSearchSegments(sources, query);
+  const segmentsByThread = new Map<number, Segment[]>();
+
+  for (const segment of segments) {
+    const existing = segmentsByThread.get(segment.threadIndex) ?? [];
+    existing.push(segment);
+    segmentsByThread.set(segment.threadIndex, existing);
+  }
+
+  // The UI renders one fold per thread, but only threads with matching chunks
+  // are returned. This keeps empty searches explicit at the top level.
+  const resultThreads = sources.flatMap((source, threadIndex) => {
+    const threadSegments = segmentsByThread.get(threadIndex) ?? [];
+    if (threadSegments.length === 0) return [];
+    return [
+      {
+        threadId: source.thread.id,
+        title: source.thread.title,
+        createdAt: source.thread.createdAt,
+        updatedAt: source.thread.updatedAt,
+        chunks: threadSegments.map((segment) => ({
+          id: `${source.thread.id}:${segment.startOrdinal}:${segment.endOrdinal}`,
+          text: segment.text,
+          startOrdinal: segment.startOrdinal,
+          endOrdinal: segment.endOrdinal,
+          matchedTerms: matchedSegmentTerms(segment, queryTerms),
+        })),
+      },
+    ];
+  });
+
+  const resultChars = resultThreads.reduce(
+    (total, thread) => total + thread.chunks.reduce((sum, chunk) => sum + chunk.text.length, 0),
+    0,
+  );
+
+  return {
+    query: query.trim(),
+    queryTerms,
+    threadCount: sources.length,
+    messageCount,
+    sourceChars,
+    estimatedTokens: approximateTokens(resultChars),
+    threads: resultThreads,
   };
 }
