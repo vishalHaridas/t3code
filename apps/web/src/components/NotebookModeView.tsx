@@ -22,7 +22,7 @@ import { ProviderModelPicker } from "./chat/ProviderModelPicker";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 
-const NOTEBOOK_PROMPT_LIMIT = 110_000;
+const NOTEBOOK_PROMPT_LIMIT = 150_000;
 const NOTEBOOK_SOURCE_BUDGET_SAFETY_MARGIN = 1_000;
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 
