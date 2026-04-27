@@ -87,4 +87,22 @@ describe("prepareNotebookSources", () => {
     expect(prepared.promptSource).not.toContain("Thread ID:");
     expect(prepared.promptSource).not.toContain("M2");
   });
+
+  it("uses the caller-provided budget for the complete-source decision", () => {
+    const filler = "implementation notes ".repeat(4_000);
+    const prepared = prepareNotebookSources(
+      [
+        thread([
+          message(1, "user", filler),
+          message(2, "assistant", "This should still fit when the caller has enough room."),
+        ]),
+      ],
+      "What happened?",
+      { sourceCharBudget: 120_000 },
+    );
+
+    expect(prepared.mode).toBe("complete");
+    expect(prepared.sourceCharBudget).toBe(120_000);
+    expect(prepared.promptSource).toContain("This should still fit");
+  });
 });

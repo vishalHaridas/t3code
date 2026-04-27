@@ -1,7 +1,6 @@
 import type { Thread } from "./types";
 
-const COMPLETE_SOURCE_CHAR_LIMIT = 70_000;
-const EVIDENCE_CHAR_BUDGET = 95_000;
+const DEFAULT_SOURCE_CHAR_BUDGET = 70_000;
 const SEGMENT_TARGET_CHARS = 4_800;
 const SEGMENT_OVERLAP_MESSAGES = 1;
 const MAX_SEGMENTS_PER_THREAD = 14;
@@ -66,9 +65,14 @@ export interface PreparedNotebookSource {
   threadCount: number;
   messageCount: number;
   sourceChars: number;
+  sourceCharBudget: number;
   estimatedTokens: number;
   mode: "complete" | "retrieved";
   promptSource: string;
+}
+
+interface PrepareNotebookSourcesOptions {
+  sourceCharBudget?: number;
 }
 
 interface NotebookMessage {
@@ -259,7 +263,7 @@ function scoreSegment(
     }
   }
 
-  if (queryWantsUserVoice(question) && /\n### M\d+ USER\n/.test(segment.text)) {
+  if (queryWantsUserVoice(question) && /\n### USER\n/.test(segment.text)) {
     score += 0.6;
   }
   if (
@@ -363,6 +367,7 @@ function formatRetrievedSources(input: {
   question: string;
   segments: readonly Segment[];
   anchors: readonly Anchor[];
+  sourceCharBudget: number;
 }): string {
   const lines = [
     "# Prepared T3 Code Thread Sources",
@@ -389,7 +394,7 @@ function formatRetrievedSources(input: {
   let chars = lines.join("\n").length;
   for (const segment of input.segments) {
     const block = [`### ${segment.thread.title}`, "", segment.text, ""].join("\n");
-    if (chars + block.length > EVIDENCE_CHAR_BUDGET) break;
+    if (chars + block.length > input.sourceCharBudget) break;
     lines.push(block);
     chars += block.length;
   }
@@ -400,29 +405,39 @@ function formatRetrievedSources(input: {
 export function prepareNotebookSources(
   threads: readonly Thread[],
   question: string,
+  options: PrepareNotebookSourcesOptions = {},
 ): PreparedNotebookSource {
+  const sourceCharBudget = Math.max(0, options.sourceCharBudget ?? DEFAULT_SOURCE_CHAR_BUDGET);
   const sources = makeThreadSources(threads);
   const sourceChars = sources.reduce((total, source) => total + source.text.length, 0);
   const messageCount = sources.reduce((total, source) => total + source.messages.length, 0);
+  const completePromptSource = formatCompleteSources(sources);
 
-  if (sourceChars <= COMPLETE_SOURCE_CHAR_LIMIT) {
-    const promptSource = formatCompleteSources(sources);
+  if (completePromptSource.length <= sourceCharBudget) {
     return {
       threadCount: sources.length,
       messageCount,
       sourceChars,
-      estimatedTokens: approximateTokens(promptSource.length),
+      sourceCharBudget,
+      estimatedTokens: approximateTokens(completePromptSource.length),
       mode: "complete",
-      promptSource,
+      promptSource: completePromptSource,
     };
   }
 
   const { segments, anchors } = selectSegments(sources, question);
-  const promptSource = formatRetrievedSources({ sources, question, segments, anchors });
+  const promptSource = formatRetrievedSources({
+    sources,
+    question,
+    segments,
+    anchors,
+    sourceCharBudget,
+  });
   return {
     threadCount: sources.length,
     messageCount,
     sourceChars,
+    sourceCharBudget,
     estimatedTokens: approximateTokens(promptSource.length),
     mode: "retrieved",
     promptSource,

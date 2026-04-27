@@ -23,6 +23,7 @@ import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 
 const NOTEBOOK_PROMPT_LIMIT = 110_000;
+const NOTEBOOK_SOURCE_BUDGET_SAFETY_MARGIN = 1_000;
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 
 function buildNotebookPrompt(input: {
@@ -135,19 +136,37 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
       )
     : (selectedThreads[0]?.modelSelection ?? project?.defaultModelSelection);
   const setModelSelection = useComposerDraftStore((state) => state.setModelSelection);
+  const notebookHistory = useMemo(
+    () => notebookMessages.filter((message) => !message.streaming),
+    [notebookMessages],
+  );
+  const sourceCharBudget = useMemo(() => {
+    const promptWithoutSources = buildNotebookPrompt({
+      preparedSource: "",
+      notebookHistory,
+      question: question || " ",
+    });
+    return Math.max(
+      0,
+      NOTEBOOK_PROMPT_LIMIT - promptWithoutSources.length - NOTEBOOK_SOURCE_BUDGET_SAFETY_MARGIN,
+    );
+  }, [notebookHistory, question]);
   const preparedSources = useMemo(
-    () => prepareNotebookSources(selectedThreads, question || " "),
-    [question, selectedThreads],
+    () =>
+      prepareNotebookSources(selectedThreads, question || " ", {
+        sourceCharBudget,
+      }),
+    [question, selectedThreads, sourceCharBudget],
   );
   const loadingSourceCount = selectedRefs.length - selectedThreads.length;
   const promptPreview = useMemo(
     () =>
       buildNotebookPrompt({
         preparedSource: preparedSources.promptSource,
-        notebookHistory: notebookMessages.filter((message) => !message.streaming),
+        notebookHistory,
         question: question || " ",
       }),
-    [notebookMessages, preparedSources.promptSource, question],
+    [notebookHistory, preparedSources.promptSource, question],
   );
   const promptTooLarge = promptPreview.length > NOTEBOOK_PROMPT_LIMIT;
   const canSubmit =
@@ -204,7 +223,7 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
     };
     const prompt = buildNotebookPrompt({
       preparedSource: preparedSources.promptSource,
-      notebookHistory: notebookMessages.filter((message) => !message.streaming),
+      notebookHistory,
       question,
     });
 
@@ -241,7 +260,7 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
     canSubmit,
     failAssistantMessage,
     finishAssistantMessage,
-    notebookMessages,
+    notebookHistory,
     preparedSources.promptSource,
     project,
     question,
@@ -308,6 +327,8 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
               {sourceLabel} - {preparedSources.sourceChars.toLocaleString()} source chars
               {" - "}
               {preparedSources.estimatedTokens.toLocaleString()} est. prompt tokens
+              {" - "}
+              {preparedSources.sourceCharBudget.toLocaleString()} source char budget
               {" - "}
               {preparedSources.mode === "complete" ? "complete source" : "retrieved source"}
               {promptTooLarge ? " - too large" : ""}
