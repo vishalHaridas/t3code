@@ -1,3 +1,4 @@
+import type { ThreadTokenUsageSnapshot } from "@t3tools/contracts";
 import { create } from "zustand";
 
 import type { NotebookSearchResult } from "./notebookRetrieval";
@@ -12,6 +13,7 @@ export interface NotebookAskResult {
   error?: boolean;
   sourceMode?: "complete" | "retrieved";
   sources?: NotebookSearchResult | null;
+  usage?: ThreadTokenUsageSnapshot | null;
 }
 
 interface NotebookModeState {
@@ -37,6 +39,7 @@ interface NotebookModeState {
     },
   ) => void;
   appendAskDelta: (delta: string) => void;
+  setAskUsage: (usage: ThreadTokenUsageSnapshot) => void;
   finishAsk: () => void;
   failAsk: (text: string) => void;
 }
@@ -123,6 +126,7 @@ export const useNotebookModeStore = create<NotebookModeState>((set, get) => ({
         streaming: true,
         sourceMode: options.sourceMode,
         sources: options.sources,
+        usage: null,
       },
     }),
   appendAskDelta: (delta) =>
@@ -131,6 +135,15 @@ export const useNotebookModeStore = create<NotebookModeState>((set, get) => ({
         ? {
             ...state.askResult,
             streamingText: state.askResult.streamingText + delta,
+          }
+        : null,
+    })),
+  setAskUsage: (usage) =>
+    set((state) => ({
+      askResult: state.askResult
+        ? {
+            ...state.askResult,
+            usage,
           }
         : null,
     })),

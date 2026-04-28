@@ -9,6 +9,8 @@ import {
   OrchestrationEvent,
   OrchestrationGetTurnDiffInput,
   OrchestrationLatestTurn,
+  OrchestrationNotebookTurnInput,
+  OrchestrationNotebookTurnStreamItem,
   ProjectCreatedPayload,
   ProjectMetaUpdatedPayload,
   OrchestrationProposedPlan,
@@ -31,6 +33,12 @@ const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
   ThreadTurnStartRequestedPayload,
 );
 const decodeOrchestrationLatestTurn = Schema.decodeUnknownEffect(OrchestrationLatestTurn);
+const decodeOrchestrationNotebookTurnInput = Schema.decodeUnknownEffect(
+  OrchestrationNotebookTurnInput,
+);
+const decodeOrchestrationNotebookTurnStreamItem = Schema.decodeUnknownEffect(
+  OrchestrationNotebookTurnStreamItem,
+);
 const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(OrchestrationProposedPlan);
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
 
@@ -81,6 +89,42 @@ it.effect("rejects thread turn diff when fromTurnCount > toTurnCount", () =>
       }),
     );
     assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
+it.effect("accepts notebook prompts beyond the normal provider turn cap", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationNotebookTurnInput({
+      threadId: "thread-1",
+      cwd: "/tmp/workspace",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.4-mini",
+      },
+      prompt: "x".repeat(200_000),
+    });
+
+    assert.strictEqual(parsed.prompt.length, 200_000);
+  }),
+);
+
+it.effect("decodes notebook usage stream items", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationNotebookTurnStreamItem({
+      type: "usage",
+      usage: {
+        usedTokens: 1200,
+        inputTokens: 1000,
+        outputTokens: 200,
+      },
+    });
+
+    assert.strictEqual(parsed.type, "usage");
+    if (parsed.type !== "usage") {
+      throw new Error("expected notebook usage stream item");
+    }
+    assert.strictEqual(parsed.usage.inputTokens, 1000);
+    assert.strictEqual(parsed.usage.outputTokens, 200);
   }),
 );
 

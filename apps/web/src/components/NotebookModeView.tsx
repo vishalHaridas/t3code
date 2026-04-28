@@ -2,6 +2,7 @@ import type { ModelSelection, ProjectId, ProviderKind, ServerProvider } from "@t
 import { ThreadId as ThreadIdSchema } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime";
 import { createModelSelection } from "@t3tools/shared/model";
+import { clampNotebookPromptCharLimit, getNotebookPromptCharLimit } from "@t3tools/shared/notebook";
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -28,6 +29,7 @@ import type {
   NotebookSearchThreadResult,
 } from "../notebookRetrieval";
 import { prepareNotebookSearchResult, prepareNotebookSources } from "../notebookRetrieval";
+import { formatContextWindowTokens } from "../lib/contextWindow";
 import { useServerConfig, useServerKeybindings } from "../rpc/serverState";
 import { selectProjectByRef, selectThreadByRef, useStore } from "../store";
 import ChatMarkdown from "./ChatMarkdown";
@@ -35,7 +37,6 @@ import { ProviderModelPicker } from "./chat/ProviderModelPicker";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 
-const NOTEBOOK_PROMPT_LIMIT = 150_000;
 const NOTEBOOK_SOURCE_BUDGET_SAFETY_MARGIN = 1_000;
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 
@@ -205,6 +206,21 @@ function NotebookThreadFold(props: {
   );
 }
 
+function formatNotebookUsageFooter(input: {
+  inputTokens: number | null;
+  outputTokens: number | null;
+}): string | null {
+  const parts = [
+    input.inputTokens !== null
+      ? `Input ${formatContextWindowTokens(input.inputTokens)} tokens`
+      : null,
+    input.outputTokens !== null
+      ? `Output ${formatContextWindowTokens(input.outputTokens)} tokens`
+      : null,
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(" - ") : null;
+}
+
 export function NotebookModeView(props: { projectId: ProjectId }) {
   const activeProjectKey = useNotebookModeStore((state) => state.activeProjectKey);
   const selectedThreadKeys = useNotebookModeStore((state) => state.selectedThreadKeys);
@@ -216,6 +232,7 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
   const setSearchResult = useNotebookModeStore((state) => state.setSearchResult);
   const startAsk = useNotebookModeStore((state) => state.startAsk);
   const appendAskDelta = useNotebookModeStore((state) => state.appendAskDelta);
+  const setAskUsage = useNotebookModeStore((state) => state.setAskUsage);
   const finishAsk = useNotebookModeStore((state) => state.finishAsk);
   const failAsk = useNotebookModeStore((state) => state.failAsk);
   const exitNotebookMode = useNotebookModeStore((state) => state.exit);
@@ -224,8 +241,8 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
     [selectedThreadKeys],
   );
   const releaseDetailSubscriptionsRef = useRef<ReadonlyArray<() => void>>([]);
+  const streamUnsubscribeRef = useRef<(() => void) | null>(null);
   const [question, setQuestion] = useState("");
-  const [streamUnsubscribe, setStreamUnsubscribe] = useState<(() => void) | null>(null);
   const settings = useSettings();
   const keybindings = useServerKeybindings();
   const serverConfig = useServerConfig();
@@ -284,6 +301,10 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
       )
     : (selectedThreads[0]?.modelSelection ?? project?.defaultModelSelection);
   const setModelSelection = useComposerDraftStore((state) => state.setModelSelection);
+  const notebookPromptLimit = useMemo(
+    () => clampNotebookPromptCharLimit(getNotebookPromptCharLimit(selectedModelSelection)),
+    [selectedModelSelection],
+  );
 
   const sourceCharBudget = useMemo(() => {
     const promptWithoutSources = buildNotebookPrompt({
@@ -292,9 +313,9 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
     });
     return Math.max(
       0,
-      NOTEBOOK_PROMPT_LIMIT - promptWithoutSources.length - NOTEBOOK_SOURCE_BUDGET_SAFETY_MARGIN,
+      notebookPromptLimit - promptWithoutSources.length - NOTEBOOK_SOURCE_BUDGET_SAFETY_MARGIN,
     );
-  }, [question]);
+  }, [notebookPromptLimit, question]);
   const preparedAskSources = useMemo(
     () =>
       prepareNotebookSources(selectedThreads, question || " ", {
@@ -311,7 +332,7 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
       }),
     [preparedAskSources.promptSource, question],
   );
-  const promptTooLarge = promptPreview.length > NOTEBOOK_PROMPT_LIMIT;
+  const promptTooLarge = promptPreview.length > notebookPromptLimit;
   const askInFlight = askResult?.streaming === true;
   const hasResult = Boolean(searchResult || askResult);
   const mutableControlsDisabled = askInFlight;
@@ -344,9 +365,10 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
 
   useEffect(() => {
     return () => {
-      streamUnsubscribe?.();
+      streamUnsubscribeRef.current?.();
+      streamUnsubscribeRef.current = null;
     };
-  }, [streamUnsubscribe]);
+  }, []);
 
   const submitSearch = useCallback(() => {
     const query = question.trim();
@@ -383,28 +405,46 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
       sources: visibleSources,
     });
 
-    const unsubscribe = api.orchestration.notebookTurn(
-      {
-        threadId: ThreadIdSchema.make(`notebook-${crypto.randomUUID()}`),
-        cwd: project.cwd,
-        modelSelection: selectedModelSelection as ModelSelection,
-        prompt,
-      },
-      (event) => {
-        // The provider streams deltas, but this UI intentionally buffers them
-        // so Ask mode behaves like a one-shot result instead of a chat stream.
-        if (event.type === "delta") {
-          appendAskDelta(event.delta);
-          return;
-        }
-        if (event.type === "error") {
-          failAsk(event.message);
-          return;
-        }
-        finishAsk();
-      },
-    );
-    setStreamUnsubscribe(() => unsubscribe);
+    streamUnsubscribeRef.current?.();
+    streamUnsubscribeRef.current = null;
+
+    try {
+      streamUnsubscribeRef.current = api.orchestration.notebookTurn(
+        {
+          threadId: ThreadIdSchema.make(`notebook-${crypto.randomUUID()}`),
+          cwd: project.cwd,
+          modelSelection: selectedModelSelection as ModelSelection,
+          prompt,
+        },
+        (event) => {
+          // The provider streams deltas, but this UI intentionally buffers them
+          // so Ask mode behaves like a one-shot result instead of a chat stream.
+          if (event.type === "delta") {
+            appendAskDelta(event.delta);
+            return;
+          }
+          if (event.type === "usage") {
+            setAskUsage(event.usage);
+            return;
+          }
+          streamUnsubscribeRef.current = null;
+          if (event.type === "error") {
+            failAsk(event.message);
+            return;
+          }
+          finishAsk();
+        },
+        {
+          onError: (message) => {
+            streamUnsubscribeRef.current = null;
+            failAsk(message);
+          },
+        },
+      );
+    } catch (error) {
+      streamUnsubscribeRef.current = null;
+      failAsk(error instanceof Error ? error.message : "Failed to start notebook ask.");
+    }
   }, [
     appendAskDelta,
     canSubmit,
@@ -416,6 +456,7 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
     question,
     selectedModelSelection,
     selectedThreads,
+    setAskUsage,
     startAsk,
   ]);
 
@@ -443,6 +484,12 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
       : loadingSourceCount > 0
         ? `${selectedThreads.length}/${selectedRefs.length} sources loaded`
         : `${selectedRefs.length} source${selectedRefs.length === 1 ? "" : "s"} selected`;
+  const askUsageFooter = askResult
+    ? formatNotebookUsageFooter({
+        inputTokens: askResult.usage?.lastInputTokens ?? askResult.usage?.inputTokens ?? null,
+        outputTokens: askResult.usage?.lastOutputTokens ?? askResult.usage?.outputTokens ?? null,
+      })
+    : null;
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
@@ -578,16 +625,26 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
                 }`}
               >
                 {askResult.streaming ? (
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Loader2Icon className="size-4 animate-spin" />
-                    Waiting for the complete answer...
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2Icon className="size-4 animate-spin" />
+                      Streaming answer...
+                    </div>
+                    {askResult.streamingText.length > 0 ? (
+                      <ChatMarkdown text={askResult.streamingText} cwd={project?.cwd} isStreaming />
+                    ) : null}
                   </div>
                 ) : askResult.error ? (
                   <div className="whitespace-pre-wrap text-sm leading-relaxed">
                     {askResult.text}
                   </div>
                 ) : (
-                  <ChatMarkdown text={askResult.text} cwd={project?.cwd} isStreaming={false} />
+                  <div className="space-y-3">
+                    <ChatMarkdown text={askResult.text} cwd={project?.cwd} isStreaming={false} />
+                    {askUsageFooter ? (
+                      <div className="text-xs text-muted-foreground">{askUsageFooter}</div>
+                    ) : null}
+                  </div>
                 )}
               </section>
 

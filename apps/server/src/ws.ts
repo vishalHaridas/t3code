@@ -665,12 +665,15 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 .pipe(Effect.mapError(toNotebookTurnError));
 
               const sendTurn = providerService
-                .sendTurn({
-                  threadId: input.threadId,
-                  input: input.prompt,
-                  modelSelection: input.modelSelection,
-                  interactionMode: "default",
-                })
+                .sendTurn(
+                  {
+                    threadId: input.threadId,
+                    input: input.prompt,
+                    modelSelection: input.modelSelection,
+                    interactionMode: "default",
+                  },
+                  { promptBudget: "notebook" },
+                )
                 .pipe(Effect.mapError(toNotebookTurnError));
 
               const runtimeItems = providerService.streamEvents.pipe(
@@ -678,6 +681,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 Stream.filter(
                   (event) =>
                     event.type === "content.delta" ||
+                    event.type === "thread.token-usage.updated" ||
                     event.type === "turn.completed" ||
                     event.type === "request.opened" ||
                     event.type === "runtime.error",
@@ -688,6 +692,9 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                     event.payload.streamKind === "assistant_text"
                   ) {
                     return { type: "delta" as const, delta: event.payload.delta };
+                  }
+                  if (event.type === "thread.token-usage.updated") {
+                    return { type: "usage" as const, usage: event.payload.usage };
                   }
                   if (event.type === "turn.completed") {
                     const message =
