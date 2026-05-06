@@ -47,6 +47,9 @@ export interface ProviderServiceShape {
    */
   readonly sendTurn: (
     input: ProviderSendTurnInput,
+    options?: {
+      readonly promptBudget?: "default" | "notebook";
+    },
   ) => Effect.Effect<ProviderTurnStartResult, ProviderServiceError>;
 
   /**

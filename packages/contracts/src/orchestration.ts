@@ -9,6 +9,7 @@ import {
   IsoDateTime,
   MessageId,
   NonNegativeInt,
+  PositiveInt,
   ProjectId,
   ProviderItemId,
   ThreadId,
@@ -104,6 +105,7 @@ export const ProviderUserInputAnswers = Schema.Record(Schema.String, Schema.Unkn
 export type ProviderUserInputAnswers = typeof ProviderUserInputAnswers.Type;
 
 export const PROVIDER_SEND_TURN_MAX_INPUT_CHARS = 120_000;
+export const NOTEBOOK_SEND_TURN_MAX_INPUT_CHARS = 1_100_000;
 export const PROVIDER_SEND_TURN_MAX_ATTACHMENTS = 8;
 export const PROVIDER_SEND_TURN_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS = 14_000_000;
@@ -1170,14 +1172,38 @@ export const OrchestrationNotebookTurnInput = Schema.Struct({
   threadId: ThreadId,
   cwd: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
-  prompt: TrimmedNonEmptyString.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS)),
+  prompt: TrimmedNonEmptyString.check(Schema.isMaxLength(NOTEBOOK_SEND_TURN_MAX_INPUT_CHARS)),
 });
 export type OrchestrationNotebookTurnInput = typeof OrchestrationNotebookTurnInput.Type;
+
+export const OrchestrationNotebookTokenUsageSnapshot = Schema.Struct({
+  usedTokens: NonNegativeInt,
+  totalProcessedTokens: Schema.optional(NonNegativeInt),
+  maxTokens: Schema.optional(PositiveInt),
+  inputTokens: Schema.optional(NonNegativeInt),
+  cachedInputTokens: Schema.optional(NonNegativeInt),
+  outputTokens: Schema.optional(NonNegativeInt),
+  reasoningOutputTokens: Schema.optional(NonNegativeInt),
+  lastUsedTokens: Schema.optional(NonNegativeInt),
+  lastInputTokens: Schema.optional(NonNegativeInt),
+  lastCachedInputTokens: Schema.optional(NonNegativeInt),
+  lastOutputTokens: Schema.optional(NonNegativeInt),
+  lastReasoningOutputTokens: Schema.optional(NonNegativeInt),
+  toolUses: Schema.optional(NonNegativeInt),
+  durationMs: Schema.optional(NonNegativeInt),
+  compactsAutomatically: Schema.optional(Schema.Boolean),
+});
+export type OrchestrationNotebookTokenUsageSnapshot =
+  typeof OrchestrationNotebookTokenUsageSnapshot.Type;
 
 export const OrchestrationNotebookTurnStreamItem = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("delta"),
     delta: Schema.String,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("usage"),
+    usage: OrchestrationNotebookTokenUsageSnapshot,
   }),
   Schema.Struct({
     type: Schema.Literal("done"),

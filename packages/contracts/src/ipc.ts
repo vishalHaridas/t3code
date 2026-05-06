@@ -268,6 +268,7 @@ export interface EnvironmentApi {
       callback: (status: GitStatusResult) => void,
       options?: {
         onResubscribe?: () => void;
+        onError?: (message: string) => void;
       },
     ) => () => void;
   };
@@ -282,12 +283,14 @@ export interface EnvironmentApi {
       callback: (event: OrchestrationNotebookTurnStreamItem) => void,
       options?: {
         onResubscribe?: () => void;
+        onError?: (message: string) => void;
       },
     ) => () => void;
     subscribeShell: (
       callback: (event: OrchestrationShellStreamItem) => void,
       options?: {
         onResubscribe?: () => void;
+        onError?: (message: string) => void;
       },
     ) => () => void;
     subscribeThread: (
@@ -295,6 +298,7 @@ export interface EnvironmentApi {
       callback: (event: OrchestrationThreadStreamItem) => void,
       options?: {
         onResubscribe?: () => void;
+        onError?: (message: string) => void;
       },
     ) => () => void;
   };

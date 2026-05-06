@@ -11,6 +11,7 @@ import { isTerminalFocused } from "../lib/terminalFocus";
 import { resolveShortcutCommand } from "../keybindings";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
+import { useNotebookModeStore } from "../notebookModeStore";
 import { resolveSidebarNewThreadEnvMode } from "~/components/Sidebar.logic";
 import { useSettings } from "~/hooks/useSettings";
 import { useServerKeybindings } from "~/rpc/serverState";
@@ -42,6 +43,8 @@ function ChatRouteGlobalShortcuts() {
         return;
       }
 
+      const notebookModeActive = useNotebookModeStore.getState().activeProjectKey !== null;
+
       if (event.key === "Escape" && selectedThreadKeysSize > 0) {
         event.preventDefault();
         clearSelection();
@@ -51,6 +54,9 @@ function ChatRouteGlobalShortcuts() {
       if (command === "chat.newLocal") {
         event.preventDefault();
         event.stopPropagation();
+        if (notebookModeActive) {
+          return;
+        }
         void startNewLocalThreadFromContext({
           activeDraftThread,
           activeThread,
@@ -66,6 +72,9 @@ function ChatRouteGlobalShortcuts() {
       if (command === "chat.new") {
         event.preventDefault();
         event.stopPropagation();
+        if (notebookModeActive) {
+          return;
+        }
         void startNewThreadFromContext({
           activeDraftThread,
           activeThread,

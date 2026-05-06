@@ -71,6 +71,45 @@ export interface PreparedNotebookSource {
   promptSource: string;
 }
 
+export interface NotebookSearchChunkMessage {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  createdAt: string;
+  ordinal: number;
+  matchedTerms: string[];
+}
+
+export interface NotebookSearchChunk {
+  id: string;
+  text: string;
+  startOrdinal: number;
+  endOrdinal: number;
+  startedAt: string;
+  endedAt: string;
+  matchedTerms: string[];
+  messages: NotebookSearchChunkMessage[];
+}
+
+export interface NotebookSearchThreadResult {
+  threadId: Thread["id"];
+  title: string;
+  createdAt: string;
+  updatedAt?: string | undefined;
+  messages: NotebookSearchChunkMessage[];
+  chunks: NotebookSearchChunk[];
+}
+
+export interface NotebookSearchResult {
+  query: string;
+  queryTerms: string[];
+  threadCount: number;
+  messageCount: number;
+  sourceChars: number;
+  estimatedTokens: number;
+  threads: NotebookSearchThreadResult[];
+}
+
 interface PrepareNotebookSourcesOptions {
   sourceCharBudget?: number;
 }
@@ -94,6 +133,9 @@ interface Segment {
   thread: Thread;
   startOrdinal: number;
   endOrdinal: number;
+  startedAt: string;
+  endedAt: string;
+  messages: NotebookMessage[];
   text: string;
   terms: Map<string, number>;
 }
@@ -206,6 +248,9 @@ function buildSegments(sources: readonly NotebookThreadSource[]): Segment[] {
         thread: source.thread,
         startOrdinal: first?.ordinal ?? 1,
         endOrdinal: last?.ordinal ?? first?.ordinal ?? 1,
+        startedAt: first?.createdAt ?? source.thread.createdAt,
+        endedAt: last?.createdAt ?? first?.createdAt ?? source.thread.createdAt,
+        messages: segmentMessages,
         text,
         terms: termCounts(text),
       });
@@ -257,7 +302,10 @@ function scoreSegment(
 ): number {
   let score = 0;
   for (const term of queryTerms) {
-    const frequency = segment.terms.get(term) ?? 0;
+    const frequency = [...segment.terms].reduce(
+      (total, [segmentTerm, count]) => total + (segmentTerm.startsWith(term) ? count : 0),
+      0,
+    );
     if (frequency > 0) {
       score += (1 + Math.log(frequency)) * (idf.get(term) ?? 1);
     }
@@ -274,6 +322,18 @@ function scoreSegment(
   }
 
   return score;
+}
+
+function hasPrefixMatch(text: string, queryTerm: string): boolean {
+  return tokenize(text).some((term) => term.startsWith(queryTerm));
+}
+
+function matchedTextTerms(text: string, queryTerms: readonly string[]): string[] {
+  return queryTerms.filter((term) => hasPrefixMatch(text, term));
+}
+
+function matchedSegmentTerms(segment: Segment, queryTerms: readonly string[]): string[] {
+  return matchedTextTerms(segment.text, queryTerms);
 }
 
 function collectAnchors(sources: readonly NotebookThreadSource[], question: string): Anchor[] {
@@ -362,6 +422,54 @@ function selectSegments(
   };
 }
 
+function selectSearchSegments(
+  sources: readonly NotebookThreadSource[],
+  query: string,
+): { segments: Segment[]; queryTerms: string[] } {
+  const segments = buildSegments(sources);
+  const idf = inverseDocumentFrequency(segments);
+  const queryTerms = [...new Set(tokenize(query))];
+  if (queryTerms.length === 0) {
+    return { segments: [], queryTerms };
+  }
+
+  // Search mode is intentionally stricter than Ask retrieval: it only shows
+  // windows with prefix token matches, so "test" finds "tests" and "testing"
+  // without drifting into fuzzy/semantic behavior.
+  const selected = segments
+    .map((segment) => ({
+      segment,
+      score: scoreSegment(segment, queryTerms, idf, query),
+      matchedTerms: matchedSegmentTerms(segment, queryTerms),
+    }))
+    .filter((item) => item.score > 0 && item.matchedTerms.length > 0)
+    .toSorted(
+      (a, b) =>
+        a.segment.threadIndex - b.segment.threadIndex ||
+        b.score - a.score ||
+        a.segment.startOrdinal - b.segment.startOrdinal,
+    );
+
+  const perThreadCount = new Map<number, number>();
+  const capped: Segment[] = [];
+  for (const item of selected) {
+    const count = perThreadCount.get(item.segment.threadIndex) ?? 0;
+    if (count >= MAX_SEGMENTS_PER_THREAD) continue;
+    perThreadCount.set(item.segment.threadIndex, count + 1);
+    capped.push(item.segment);
+  }
+
+  return {
+    segments: capped.toSorted(
+      (a, b) =>
+        a.threadIndex - b.threadIndex ||
+        a.startedAt.localeCompare(b.startedAt) ||
+        a.startOrdinal - b.startOrdinal,
+    ),
+    queryTerms,
+  };
+}
+
 function formatRetrievedSources(input: {
   sources: readonly NotebookThreadSource[];
   question: string;
@@ -441,5 +549,98 @@ export function prepareNotebookSources(
     estimatedTokens: approximateTokens(promptSource.length),
     mode: "retrieved",
     promptSource,
+  };
+}
+
+export function prepareNotebookSearchResult(
+  threads: readonly Thread[],
+  query: string,
+): NotebookSearchResult {
+  const sources = makeThreadSources(threads);
+  const sourceChars = sources.reduce((total, source) => total + source.text.length, 0);
+  const messageCount = sources.reduce((total, source) => total + source.messages.length, 0);
+  const { segments, queryTerms } = selectSearchSegments(sources, query);
+  const segmentsByThread = new Map<number, Segment[]>();
+
+  for (const segment of segments) {
+    const existing = segmentsByThread.get(segment.threadIndex) ?? [];
+    existing.push(segment);
+    segmentsByThread.set(segment.threadIndex, existing);
+  }
+
+  // The UI renders one fold per thread, but only threads with matching chunks
+  // are returned. This keeps empty searches explicit at the top level.
+  const resultThreads = sources.flatMap((source, threadIndex) => {
+    const threadSegments = segmentsByThread.get(threadIndex) ?? [];
+    if (threadSegments.length === 0) return [];
+    const messagesByOrdinal = new Map(source.messages.map((message) => [message.ordinal, message]));
+    const matchingOrdinals = new Set<number>();
+    for (const segment of threadSegments) {
+      for (const message of segment.messages) {
+        if (matchedTextTerms(message.text, queryTerms).length > 0) {
+          matchingOrdinals.add(message.ordinal);
+        }
+      }
+    }
+
+    return [
+      {
+        threadId: source.thread.id,
+        title: source.thread.title,
+        createdAt: source.thread.createdAt,
+        updatedAt: source.thread.updatedAt,
+        messages: source.messages.map((message) => ({
+          id: message.id,
+          role: message.role,
+          text: message.text,
+          createdAt: message.createdAt,
+          ordinal: message.ordinal,
+          matchedTerms: matchedTextTerms(message.text, queryTerms),
+        })),
+        chunks: [...matchingOrdinals]
+          .toSorted((a, b) => a - b)
+          .flatMap((ordinal) => {
+            const message = messagesByOrdinal.get(ordinal);
+            if (!message) return [];
+            const matchedTerms = matchedTextTerms(message.text, queryTerms);
+            return [
+              {
+                id: `${source.thread.id}:${message.ordinal}`,
+                text: formatMessage(message),
+                startOrdinal: message.ordinal,
+                endOrdinal: message.ordinal,
+                startedAt: message.createdAt,
+                endedAt: message.createdAt,
+                matchedTerms,
+                messages: [
+                  {
+                    id: message.id,
+                    role: message.role,
+                    text: message.text,
+                    createdAt: message.createdAt,
+                    ordinal: message.ordinal,
+                    matchedTerms,
+                  },
+                ],
+              },
+            ];
+          }),
+      },
+    ];
+  });
+
+  const resultChars = resultThreads.reduce(
+    (total, thread) => total + thread.chunks.reduce((sum, chunk) => sum + chunk.text.length, 0),
+    0,
+  );
+
+  return {
+    query: query.trim(),
+    queryTerms,
+    threadCount: sources.length,
+    messageCount,
+    sourceChars,
+    estimatedTokens: approximateTokens(resultChars),
+    threads: resultThreads,
   };
 }

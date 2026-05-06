@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { prepareNotebookSources } from "./notebookRetrieval";
+import { prepareNotebookSearchResult, prepareNotebookSources } from "./notebookRetrieval";
 import type { ChatMessage, Thread } from "./types";
 
 function message(
@@ -104,5 +104,68 @@ describe("prepareNotebookSources", () => {
     expect(prepared.mode).toBe("complete");
     expect(prepared.sourceCharBudget).toBe(120_000);
     expect(prepared.promptSource).toContain("This should still fit");
+  });
+});
+
+describe("prepareNotebookSearchResult", () => {
+  it("returns focused chunks grouped by matching thread", () => {
+    const result = prepareNotebookSearchResult(
+      [
+        thread(
+          [
+            message(1, "user", "Where is sourceCharBudget calculated?"),
+            message(2, "assistant", "sourceCharBudget is derived from the notebook prompt limit."),
+          ],
+          "Budget thread",
+        ),
+        {
+          ...thread([message(1, "user", "Unrelated notes about project setup.")], "Other thread"),
+          id: "thread-2" as Thread["id"],
+        },
+      ],
+      "sourceCharBudget",
+    );
+
+    expect(result.threads).toHaveLength(1);
+    expect(result.threads[0]?.title).toBe("Budget thread");
+    expect(result.threads[0]?.chunks).toHaveLength(2);
+    expect(result.threads[0]?.chunks[0]?.matchedTerms).toContain("sourcecharbudget");
+    expect(result.threads[0]?.chunks[0]?.text).toContain("sourceCharBudget");
+    expect(result.threads[0]?.chunks[0]?.messages[0]?.role).toBe("user");
+    expect(result.threads[0]?.chunks[0]?.messages).toHaveLength(1);
+    expect(result.threads[0]?.messages).toHaveLength(2);
+    expect(result.threads[0]?.chunks[0]?.startedAt).toBe("2026-04-25T00:00:01.000Z");
+  });
+
+  it("does not return complete sources when the full source would fit", () => {
+    const result = prepareNotebookSearchResult(
+      [thread([message(1, "user", "Tiny exact match for notebook search.")])],
+      "notebook",
+    );
+
+    expect(result.threads[0]?.chunks).toHaveLength(1);
+    expect(result.threads[0]?.chunks[0]?.text).toContain("Tiny exact match");
+    expect(result.threads[0]?.chunks[0]?.text).not.toContain("The selected sources fit");
+  });
+
+  it("returns an empty result when no query terms match", () => {
+    const result = prepareNotebookSearchResult(
+      [thread([message(1, "user", "Notebook retrieval notes.")])],
+      "websocket",
+    );
+
+    expect(result.queryTerms).toEqual(["websocket"]);
+    expect(result.threads).toEqual([]);
+  });
+
+  it("matches query terms as token prefixes", () => {
+    const result = prepareNotebookSearchResult(
+      [thread([message(1, "user", "The tests and testing setup both passed.")])],
+      "test",
+    );
+
+    expect(result.threads).toHaveLength(1);
+    expect(result.threads[0]?.chunks[0]?.matchedTerms).toEqual(["test"]);
+    expect(result.threads[0]?.chunks[0]?.messages[0]?.matchedTerms).toEqual(["test"]);
   });
 });
