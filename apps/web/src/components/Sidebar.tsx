@@ -386,7 +386,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const isConfirmingArchive = confirmingArchiveThreadKey === threadKey && !isThreadRunning;
   const threadMetaClassName = isConfirmingArchive
     ? "pointer-events-none opacity-0"
-    : !isThreadRunning
+    : !notebookModeActive && !isThreadRunning
       ? "pointer-events-none transition-opacity duration-150 group-hover/menu-sub-item:opacity-0 group-focus-within/menu-sub-item:opacity-0"
       : "pointer-events-none";
   const clearConfirmingArchive = useCallback(() => {
@@ -625,7 +625,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   <button
                     type="button"
                     aria-label={prStatus.tooltip}
-                    className={`inline-flex items-center justify-center ${prStatus.colorClass} cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring`}
+                    className={`pointer-events-auto inline-flex items-center justify-center ${prStatus.colorClass} cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring`}
                     onClick={handlePrClick}
                   >
                     <GitPullRequestIcon className="size-3" />
@@ -636,7 +636,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             </Tooltip>
           )}
           {threadStatus && <ThreadStatusLabel status={threadStatus} />}
-          {renamingThreadKey === threadKey ? (
+          {renamingThreadKey === threadKey && !notebookModeActive ? (
             <input
               ref={handleRenameInputRef}
               className="min-w-0 flex-1 truncate text-xs bg-transparent outline-none border border-ring rounded px-0.5"
@@ -646,6 +646,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               onBlur={handleRenameInputBlur}
               onClick={handleRenameInputClick}
             />
+          ) : notebookModeActive ? (
+            <span
+              className="min-w-0 flex-1 truncate text-xs"
+              data-testid={`thread-title-${thread.id}`}
+            >
+              {thread.title}
+            </span>
           ) : (
             <Tooltip>
               <TooltipTrigger
@@ -676,7 +683,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             </span>
           )}
           <div className="flex min-w-12 justify-end pr-1">
-            {isConfirmingArchive ? (
+            {!notebookModeActive && isConfirmingArchive ? (
               <button
                 ref={handleConfirmArchiveRef}
                 type="button"
@@ -689,7 +696,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               >
                 Confirm
               </button>
-            ) : !isThreadRunning ? (
+            ) : !notebookModeActive && !isThreadRunning ? (
               appSettingsConfirmThreadArchive ? (
                 <div className="pointer-events-none absolute top-1/2 right-1 -translate-y-1/2 opacity-0 transition-opacity duration-150 group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:pointer-events-auto group-focus-within/menu-sub-item:opacity-100">
                   <button
@@ -744,7 +751,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     <TooltipPopup side="top">{threadEnvironmentLabel}</TooltipPopup>
                   </Tooltip>
                 )}
-                {jumpLabel ? (
+                {!notebookModeActive && jumpLabel ? (
                   <span
                     className="inline-flex h-5 items-center rounded-full border border-border/80 bg-background/90 px-1.5 font-mono text-[10px] font-medium tracking-tight text-foreground shadow-sm"
                     title={jumpLabel}
@@ -916,7 +923,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
           );
         })}
 
-      {projectExpanded && hasOverflowingThreads && !isThreadListExpanded && (
+      {!notebookModeActive && projectExpanded && hasOverflowingThreads && !isThreadListExpanded && (
         <SidebarMenuSubItem className="w-full">
           <SidebarMenuSubButton
             render={showMoreButtonRender}
@@ -934,7 +941,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
           </SidebarMenuSubButton>
         </SidebarMenuSubItem>
       )}
-      {projectExpanded && hasOverflowingThreads && isThreadListExpanded && (
+      {!notebookModeActive && projectExpanded && hasOverflowingThreads && isThreadListExpanded && (
         <SidebarMenuSubItem className="w-full">
           <SidebarMenuSubButton
             render={showLessButtonRender}
@@ -1011,6 +1018,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const router = useRouter();
   const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
   const toggleProject = useUiStateStore((state) => state.toggleProject);
+  const setProjectExpanded = useUiStateStore((state) => state.setProjectExpanded);
   const toggleThreadSelection = useThreadSelectionStore((state) => state.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((state) => state.rangeSelectTo);
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
@@ -1236,7 +1244,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     };
     const hasOverflowingThreads = visibleProjectThreads.length > THREAD_PREVIEW_LIMIT;
     const previewThreads =
-      isThreadListExpanded || !hasOverflowingThreads
+      isNotebookProject || isThreadListExpanded || !hasOverflowingThreads
         ? visibleProjectThreads
         : visibleProjectThreads.slice(0, THREAD_PREVIEW_LIMIT);
     const visibleThreadKeys = new Set(
@@ -1264,6 +1272,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     };
   }, [
     isThreadListExpanded,
+    isNotebookProject,
     pinnedCollapsedThread,
     projectExpanded,
     projectThreads,
@@ -1818,9 +1827,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     (event: React.MouseEvent<HTMLButtonElement>) => {
       event.preventDefault();
       event.stopPropagation();
+      setProjectExpanded(project.projectKey, true);
+      expandThreadListForProject(project.projectKey);
       toggleNotebookProject(project.projectKey);
     },
-    [project.projectKey, toggleNotebookProject],
+    [expandThreadListForProject, project.projectKey, setProjectExpanded, toggleNotebookProject],
   );
 
   const attemptArchiveThread = useCallback(
@@ -2131,44 +2142,48 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             </TooltipPopup>
           </Tooltip>
         )}
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <div className="pointer-events-none absolute top-1 right-1.5 flex opacity-0 transition-opacity duration-150 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100">
-                <button
-                  type="button"
-                  aria-label={
-                    isNotebookProject
-                      ? `Exit notebook mode for ${project.displayName}`
-                      : `Open notebook mode for ${project.displayName}`
-                  }
-                  className={`inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 hover:bg-secondary hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring ${
-                    isNotebookProject ? "bg-secondary text-foreground" : ""
-                  }`}
-                  onClick={handleNotebookModeClick}
-                >
-                  <SearchIcon className="size-3.5" />
-                </button>
-                <button
-                  type="button"
-                  aria-label={`Create new thread in ${project.displayName}`}
-                  data-testid="new-thread-button"
-                  className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 hover:bg-secondary hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
-                  onClick={handleCreateThreadClick}
-                >
-                  <SquarePenIcon className="size-3.5" />
-                </button>
-              </div>
-            }
-          />
-          <TooltipPopup side="top">
-            {isNotebookProject
-              ? "Exit notebook mode"
-              : newThreadShortcutLabel
-                ? `Notebook mode / New thread (${newThreadShortcutLabel})`
-                : "Notebook mode / New thread"}
-          </TooltipPopup>
-        </Tooltip>
+        {!notebookModeActive || isNotebookProject ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <div className="pointer-events-none absolute top-1 right-1.5 flex opacity-0 transition-opacity duration-150 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100">
+                  <button
+                    type="button"
+                    aria-label={
+                      isNotebookProject
+                        ? `Exit notebook mode for ${project.displayName}`
+                        : `Open notebook mode for ${project.displayName}`
+                    }
+                    className={`inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 hover:bg-secondary hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring ${
+                      isNotebookProject ? "bg-secondary text-foreground" : ""
+                    }`}
+                    onClick={handleNotebookModeClick}
+                  >
+                    <SearchIcon className="size-3.5" />
+                  </button>
+                  {!notebookModeActive ? (
+                    <button
+                      type="button"
+                      aria-label={`Create new thread in ${project.displayName}`}
+                      data-testid="new-thread-button"
+                      className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 hover:bg-secondary hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                      onClick={handleCreateThreadClick}
+                    >
+                      <SquarePenIcon className="size-3.5" />
+                    </button>
+                  ) : null}
+                </div>
+              }
+            />
+            <TooltipPopup side="top">
+              {isNotebookProject
+                ? "Exit notebook mode"
+                : newThreadShortcutLabel
+                  ? `Notebook mode / New thread (${newThreadShortcutLabel})`
+                  : "Notebook mode / New thread"}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
       </div>
 
       <SidebarProjectThreadList
@@ -2183,7 +2198,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         isThreadListExpanded={isThreadListExpanded}
         projectCwd={project.cwd}
         activeRouteThreadKey={activeRouteThreadKey}
-        threadJumpLabelByKey={threadJumpLabelByKey}
+        threadJumpLabelByKey={notebookModeActive ? EMPTY_THREAD_JUMP_LABELS : threadJumpLabelByKey}
         appSettingsConfirmThreadArchive={appSettingsConfirmThreadArchive}
         renamingThreadKey={renamingThreadKey}
         renamingTitle={renamingTitle}
@@ -2634,6 +2649,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     attachProjectListAutoAnimateRef,
     projectsLength,
   } = props;
+  const notebookModeActive = useNotebookModeStore((state) => state.activeProjectKey !== null);
 
   const handleProjectSortOrderChange = useCallback(
     (sortOrder: SidebarProjectSortOrder) => {
@@ -2663,7 +2679,10 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
               render={
                 <SidebarMenuButton
                   size="sm"
-                  className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground focus-visible:ring-0"
+                  disabled={notebookModeActive}
+                  className={`gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground focus-visible:ring-0 ${
+                    notebookModeActive ? "pointer-events-none opacity-35" : ""
+                  }`}
                   data-testid="command-palette-trigger"
                 />
               }
@@ -2708,30 +2727,34 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
             Projects
           </span>
           <div className="flex items-center gap-1">
-            <ProjectSortMenu
-              projectSortOrder={projectSortOrder}
-              threadSortOrder={threadSortOrder}
-              projectGroupingMode={projectGroupingMode}
-              onProjectSortOrderChange={handleProjectSortOrderChange}
-              onThreadSortOrderChange={handleThreadSortOrderChange}
-              onProjectGroupingModeChange={handleProjectGroupingModeChange}
-            />
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <button
-                    type="button"
-                    aria-label="Add project"
-                    data-testid="sidebar-add-project-trigger"
-                    className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
-                    onClick={openAddProject}
-                  />
-                }
-              >
-                <PlusIcon className="size-3.5" />
-              </TooltipTrigger>
-              <TooltipPopup side="right">Add project</TooltipPopup>
-            </Tooltip>
+            {!notebookModeActive ? (
+              <>
+                <ProjectSortMenu
+                  projectSortOrder={projectSortOrder}
+                  threadSortOrder={threadSortOrder}
+                  projectGroupingMode={projectGroupingMode}
+                  onProjectSortOrderChange={handleProjectSortOrderChange}
+                  onThreadSortOrderChange={handleThreadSortOrderChange}
+                  onProjectGroupingModeChange={handleProjectGroupingModeChange}
+                />
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        aria-label="Add project"
+                        data-testid="sidebar-add-project-trigger"
+                        className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                        onClick={openAddProject}
+                      />
+                    }
+                  >
+                    <PlusIcon className="size-3.5" />
+                  </TooltipTrigger>
+                  <TooltipPopup side="right">Add project</TooltipPopup>
+                </Tooltip>
+              </>
+            ) : null}
           </div>
         </div>
 
@@ -2762,7 +2785,9 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                         handleNewThread={handleNewThread}
                         archiveThread={archiveThread}
                         deleteThread={deleteThread}
-                        threadJumpLabelByKey={threadJumpLabelByKey}
+                        threadJumpLabelByKey={
+                          notebookModeActive ? EMPTY_THREAD_JUMP_LABELS : threadJumpLabelByKey
+                        }
                         attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
                         expandThreadListForProject={expandThreadListForProject}
                         collapseThreadListForProject={collapseThreadListForProject}
@@ -2794,7 +2819,9 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 handleNewThread={handleNewThread}
                 archiveThread={archiveThread}
                 deleteThread={deleteThread}
-                threadJumpLabelByKey={threadJumpLabelByKey}
+                threadJumpLabelByKey={
+                  notebookModeActive ? EMPTY_THREAD_JUMP_LABELS : threadJumpLabelByKey
+                }
                 attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
                 expandThreadListForProject={expandThreadListForProject}
                 collapseThreadListForProject={collapseThreadListForProject}

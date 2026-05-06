@@ -11,6 +11,7 @@ export interface NotebookAskResult {
   streamingText: string;
   streaming: boolean;
   error?: boolean;
+  stopped?: boolean;
   sourceMode?: "complete" | "retrieved";
   sources?: NotebookSearchResult | null;
   usage?: ThreadTokenUsageSnapshot | null;
@@ -42,6 +43,7 @@ interface NotebookModeState {
   setAskUsage: (usage: ThreadTokenUsageSnapshot) => void;
   finishAsk: () => void;
   failAsk: (text: string) => void;
+  stopAsk: () => void;
 }
 
 const emptySelection = () => new Set<string>();
@@ -166,6 +168,17 @@ export const useNotebookModeStore = create<NotebookModeState>((set, get) => ({
             streamingText: text,
             streaming: false,
             error: true,
+          }
+        : null,
+    })),
+  stopAsk: () =>
+    set((state) => ({
+      askResult: state.askResult
+        ? {
+            ...state.askResult,
+            text: state.askResult.streamingText || "Stopped before any answer was received.",
+            streaming: false,
+            stopped: true,
           }
         : null,
     })),

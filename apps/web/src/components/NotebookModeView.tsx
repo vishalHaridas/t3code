@@ -4,17 +4,22 @@ import { parseScopedThreadKey } from "@t3tools/client-runtime";
 import { createModelSelection } from "@t3tools/shared/model";
 import { clampNotebookPromptCharLimit, getNotebookPromptCharLimit } from "@t3tools/shared/notebook";
 import {
+  AlertCircleIcon,
+  CheckCircle2Icon,
   ChevronDownIcon,
   ChevronRightIcon,
+  FileTextIcon,
   Loader2Icon,
   SearchIcon,
   SendIcon,
+  SquareIcon,
   XIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 
+import { cn } from "~/lib/utils";
 import {
   useEffectiveComposerModelState,
   useComposerDraftStore,
@@ -33,12 +38,69 @@ import { formatContextWindowTokens } from "../lib/contextWindow";
 import { useServerConfig, useServerKeybindings } from "../rpc/serverState";
 import { selectProjectByRef, selectThreadByRef, useStore } from "../store";
 import ChatMarkdown from "./ChatMarkdown";
+import { MessageCopyButton } from "./chat/MessageCopyButton";
 import { ProviderModelPicker } from "./chat/ProviderModelPicker";
 import { Button } from "./ui/button";
-import { Textarea } from "./ui/textarea";
 
 const NOTEBOOK_SOURCE_BUDGET_SAFETY_MARGIN = 1_000;
 const EMPTY_PROVIDERS: ServerProvider[] = [];
+
+function getCompleteSourcePressure(input: { estimatedTokens: number; promptLimitChars: number }) {
+  const hardLimit = Math.max(1, Math.floor(input.promptLimitChars / 4));
+  const softLimit = hardLimit * 0.3;
+  const collapseStart = hardLimit * 0.45;
+  const collapseEnd = hardLimit * 0.8;
+  let danger = 0;
+
+  if (input.estimatedTokens <= softLimit) {
+    danger = 0.3 * (input.estimatedTokens / softLimit);
+  } else if (input.estimatedTokens <= collapseStart) {
+    const t = (input.estimatedTokens - softLimit) / (collapseStart - softLimit);
+    danger = 0.3 + t * 0.4;
+  } else {
+    const t = Math.min(1, (input.estimatedTokens - collapseStart) / (collapseEnd - collapseStart));
+    danger = 0.7 + t ** 2 * 0.3;
+  }
+
+  if (danger >= 0.9) {
+    return {
+      className:
+        "border-red-950/40 bg-red-950/25 text-red-950 dark:border-red-300/25 dark:bg-red-950/35 dark:text-red-200",
+      label: "Over budget",
+      hardLimit,
+    };
+  }
+  if (danger >= 0.7) {
+    return {
+      className:
+        "border-red-700/35 bg-red-500/12 text-red-800 dark:border-red-300/25 dark:bg-red-950/30 dark:text-red-200",
+      label: "At the edge",
+      hardLimit,
+    };
+  }
+  if (danger >= 0.5) {
+    return {
+      className:
+        "border-orange-600/35 bg-orange-500/12 text-orange-800 dark:border-orange-300/25 dark:bg-orange-950/28 dark:text-orange-200",
+      label: "Getting tight",
+      hardLimit,
+    };
+  }
+  if (danger >= 0.3) {
+    return {
+      className:
+        "border-yellow-600/35 bg-yellow-500/12 text-yellow-800 dark:border-yellow-300/25 dark:bg-yellow-950/25 dark:text-yellow-100",
+      label: "Moderate",
+      hardLimit,
+    };
+  }
+  return {
+    className:
+      "border-emerald-600/30 bg-emerald-500/10 text-emerald-800 dark:border-emerald-300/25 dark:bg-emerald-950/25 dark:text-emerald-100",
+    label: "Comfortable",
+    hardLimit,
+  };
+}
 
 function buildNotebookPrompt(input: { preparedSource: string; question: string }): string {
   return [
@@ -211,14 +273,10 @@ function formatNotebookUsageFooter(input: {
   outputTokens: number | null;
 }): string | null {
   const parts = [
-    input.inputTokens !== null
-      ? `Input ${formatContextWindowTokens(input.inputTokens)} tokens`
-      : null,
-    input.outputTokens !== null
-      ? `Output ${formatContextWindowTokens(input.outputTokens)} tokens`
-      : null,
+    input.inputTokens !== null ? `${formatContextWindowTokens(input.inputTokens)} in` : null,
+    input.outputTokens !== null ? `${formatContextWindowTokens(input.outputTokens)} out` : null,
   ].filter(Boolean);
-  return parts.length > 0 ? parts.join(" - ") : null;
+  return parts.length > 0 ? `Tokens: ${parts.join(" · ")}` : null;
 }
 
 export function NotebookModeView(props: { projectId: ProjectId }) {
@@ -235,6 +293,7 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
   const setAskUsage = useNotebookModeStore((state) => state.setAskUsage);
   const finishAsk = useNotebookModeStore((state) => state.finishAsk);
   const failAsk = useNotebookModeStore((state) => state.failAsk);
+  const stopAsk = useNotebookModeStore((state) => state.stopAsk);
   const exitNotebookMode = useNotebookModeStore((state) => state.exit);
   const selectedRefs = useMemo(
     () => [...selectedThreadKeys].flatMap((key) => parseScopedThreadKey(key) ?? []),
@@ -334,7 +393,6 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
   );
   const promptTooLarge = promptPreview.length > notebookPromptLimit;
   const askInFlight = askResult?.streaming === true;
-  const hasResult = Boolean(searchResult || askResult);
   const mutableControlsDisabled = askInFlight;
   const canSubmit =
     selectedRefs.length > 0 &&
@@ -468,6 +526,12 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
     submitAsk();
   }, [mode, submitAsk, submitSearch]);
 
+  const stopStreamingAsk = useCallback(() => {
+    streamUnsubscribeRef.current?.();
+    streamUnsubscribeRef.current = null;
+    stopAsk();
+  }, [stopAsk]);
+
   const handleQuestionChange = useCallback(
     (value: string) => {
       setQuestion(value);
@@ -480,10 +544,14 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
 
   const sourceLabel =
     selectedRefs.length === 0
-      ? "No sources selected"
+      ? "No sources"
       : loadingSourceCount > 0
         ? `${selectedThreads.length}/${selectedRefs.length} sources loaded`
         : `${selectedRefs.length} source${selectedRefs.length === 1 ? "" : "s"} selected`;
+  const completeSourcePressure = getCompleteSourcePressure({
+    estimatedTokens: preparedAskSources.estimatedTokens,
+    promptLimitChars: notebookPromptLimit,
+  });
   const askUsageFooter = askResult
     ? formatNotebookUsageFooter({
         inputTokens: askResult.usage?.lastInputTokens ?? askResult.usage?.inputTokens ?? null,
@@ -496,9 +564,6 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
       <header className="flex h-[52px] shrink-0 items-center gap-3 border-b border-border px-5">
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-sm font-medium">Notebook mode</h2>
-          <p className="truncate text-xs text-muted-foreground">
-            Search selected threads locally, or ask a model-backed question.
-          </p>
         </div>
         <Button variant="outline" size="sm" onClick={exitNotebookMode} disabled={askInFlight}>
           <XIcon className="size-3.5" />
@@ -526,7 +591,7 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
                 </button>
               ))}
             </div>
-            <div className={mode === "search" ? "opacity-55" : ""}>
+            {mode === "ask" ? (
               <ProviderModelPicker
                 compact
                 provider={selectedProvider}
@@ -540,12 +605,12 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
                   setModelSelection(draftId, createModelSelection(provider, model));
                 }}
               />
-            </div>
+            ) : null}
           </div>
 
-          <div className="rounded-lg border border-input bg-card p-2 shadow-xs">
-            <div className="flex gap-2">
-              <Textarea
+          <div className="space-y-2 rounded-lg border border-input bg-card p-2 shadow-xs">
+            <div className="flex items-end gap-2">
+              <textarea
                 value={question}
                 onChange={(event) => handleQuestionChange(event.target.value)}
                 placeholder={
@@ -555,7 +620,7 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
                       ? "Search selected threads"
                       : "Ask about selected threads"
                 }
-                className="min-h-20 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0"
+                className="field-sizing-content max-h-28 min-h-9 flex-1 resize-none overflow-y-auto bg-transparent px-1 py-1.5 text-sm leading-5 outline-none placeholder:text-muted-foreground/72"
                 disabled={askInFlight}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
@@ -564,9 +629,58 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
                   }
                 }}
               />
-              <Button className="self-end" disabled={!canSubmit} onClick={submit}>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <span
+                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border/70 bg-muted/30 px-2 py-1"
+                  title={`${preparedAskSources.sourceChars.toLocaleString()} source chars, ${preparedAskSources.estimatedTokens.toLocaleString()} est. ask tokens`}
+                >
+                  <FileTextIcon className="size-3.5" />
+                  {sourceLabel}
+                </span>
+                {selectedRefs.length > 0 ? (
+                  <span
+                    className={cn(
+                      "inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 transition-colors",
+                      preparedAskSources.mode === "complete"
+                        ? completeSourcePressure.className
+                        : "border-border/70 bg-muted/30",
+                    )}
+                    title={
+                      preparedAskSources.mode === "complete"
+                        ? `${completeSourcePressure.label}: ${preparedAskSources.estimatedTokens.toLocaleString()} / ${completeSourcePressure.hardLimit.toLocaleString()} est. ask tokens`
+                        : "Relevant chunks are retrieved from selected messages"
+                    }
+                  >
+                    {preparedAskSources.mode === "complete" ? (
+                      <CheckCircle2Icon className="size-3.5" />
+                    ) : (
+                      <SearchIcon className="size-3.5" />
+                    )}
+                    {preparedAskSources.mode === "complete"
+                      ? "Complete source"
+                      : "Retrieved source"}
+                  </span>
+                ) : null}
+                {promptTooLarge ? (
+                  <span
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-destructive"
+                    title={`${preparedAskSources.estimatedTokens.toLocaleString()} est. ask tokens`}
+                  >
+                    <AlertCircleIcon className="size-3.5" />
+                    Ask prompt too large
+                  </span>
+                ) : null}
+              </div>
+              <Button
+                disabled={!askInFlight && !canSubmit}
+                onClick={askInFlight ? stopStreamingAsk : submit}
+                title={askInFlight ? "Stop generation" : undefined}
+              >
                 {askInFlight ? (
-                  <Loader2Icon className="size-4 animate-spin" />
+                  <SquareIcon className="size-4 fill-current" />
                 ) : mode === "search" ? (
                   <SearchIcon className="size-4" />
                 ) : (
@@ -575,41 +689,17 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
               </Button>
             </div>
           </div>
-
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-            <span>{sourceLabel}</span>
-            <span>-</span>
-            <span>{preparedAskSources.sourceChars.toLocaleString()} source chars</span>
-            <span>-</span>
-            <span>{preparedAskSources.estimatedTokens.toLocaleString()} est. ask tokens</span>
-            <span>-</span>
-            <span>
-              {preparedAskSources.mode === "complete"
-                ? "complete ask source"
-                : "retrieved ask source"}
-            </span>
-            {hasResult ? (
-              <>
-                <span>-</span>
-                <span>clear the query to change sources</span>
-              </>
-            ) : null}
-            {promptTooLarge ? (
-              <>
-                <span>-</span>
-                <span className="text-destructive">ask prompt too large</span>
-              </>
-            ) : null}
-          </div>
         </div>
       </div>
 
       <main className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
         <div className="mx-auto w-full max-w-5xl">
           {!searchResult && !askResult ? (
-            <div className="rounded-lg border border-dashed border-border p-5 text-sm text-muted-foreground">
-              Select one or more threads, enter a query, then run Search for folded chunks or Ask
-              for one model-backed answer.
+            <div className="flex min-h-[42vh] items-center justify-center px-5 text-center text-sm text-muted-foreground">
+              <p className="max-w-md leading-relaxed">
+                Select one or more threads, enter a query, then run Search for folded chunks or Ask
+                for one model-backed answer.
+              </p>
             </div>
           ) : null}
 
@@ -618,17 +708,29 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
           {askResult ? (
             <div className="space-y-3">
               <section
-                className={`rounded-lg border p-4 ${
+                className={`group/notebook-answer px-1 py-2 ${
                   askResult.error
-                    ? "border-destructive/30 bg-destructive/10"
-                    : "border-border bg-card"
+                    ? "rounded-lg border border-destructive/30 bg-destructive/10 p-4"
+                    : ""
                 }`}
               >
                 {askResult.streaming ? (
                   <div className="space-y-3">
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Loader2Icon className="size-4 animate-spin" />
-                      Streaming answer...
+                      <div className="flex min-w-0 flex-1 items-center gap-2">
+                        <Loader2Icon className="size-4 animate-spin" />
+                        Working...
+                      </div>
+                      {askResult.streamingText.trim().length > 0 ? (
+                        <div className="opacity-0 transition-opacity duration-200 group-hover/notebook-answer:opacity-100">
+                          <MessageCopyButton
+                            text={askResult.streamingText}
+                            size="icon-xs"
+                            variant="outline"
+                            className="border-border/50 bg-background/35 text-muted-foreground/45 shadow-none hover:border-border/70 hover:bg-background/55 hover:text-muted-foreground/70"
+                          />
+                        </div>
+                      ) : null}
                     </div>
                     {askResult.streamingText.length > 0 ? (
                       <ChatMarkdown text={askResult.streamingText} cwd={project?.cwd} isStreaming />
@@ -640,31 +742,39 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    <ChatMarkdown text={askResult.text} cwd={project?.cwd} isStreaming={false} />
-                    {askUsageFooter ? (
-                      <div className="text-xs text-muted-foreground">{askUsageFooter}</div>
+                    {askResult.stopped ? (
+                      <div className="text-xs text-muted-foreground">Stopped</div>
                     ) : null}
+                    <ChatMarkdown text={askResult.text} cwd={project?.cwd} isStreaming={false} />
+                    <div className="flex items-center gap-2">
+                      {askUsageFooter ? (
+                        <div className="text-xs text-muted-foreground">{askUsageFooter}</div>
+                      ) : null}
+                      {askResult.text.trim().length > 0 ? (
+                        <div className="opacity-0 transition-opacity duration-200 group-hover/notebook-answer:opacity-100">
+                          <MessageCopyButton
+                            text={askResult.text}
+                            size="icon-xs"
+                            variant="outline"
+                            className="border-border/50 bg-background/35 text-muted-foreground/45 shadow-none hover:border-border/70 hover:bg-background/55 hover:text-muted-foreground/70"
+                          />
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 )}
               </section>
 
-              {askResult.sources && !askResult.streaming ? (
+              {askResult.sources && askResult.sourceMode === "retrieved" && !askResult.streaming ? (
                 <details className="rounded-lg border border-border bg-card/40">
                   <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
                     Sources
                   </summary>
                   <div className="border-t border-border p-3">
-                    {askResult.sourceMode === "complete" ? (
-                      <div className="text-sm text-muted-foreground">
-                        Ask used complete selected thread messages because they fit the prompt
-                        budget.
-                      </div>
-                    ) : (
-                      <NotebookSearchResults
-                        result={askResult.sources}
-                        title="Retrieved chunks sent to Ask"
-                      />
-                    )}
+                    <NotebookSearchResults
+                      result={askResult.sources}
+                      title="Retrieved chunks sent to Ask"
+                    />
                   </div>
                 </details>
               ) : null}
