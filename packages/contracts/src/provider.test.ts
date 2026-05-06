@@ -140,4 +140,13 @@ describe("ProviderSendTurnInput", () => {
     expect(getOptionValue(parsed.modelSelection.options, "effort")).toBe("ultrathink");
     expect(getOptionValue(parsed.modelSelection.options, "fastMode")).toBe(true);
   });
+
+  it("rejects prompts that exceed the standard turn cap", () => {
+    expect(() =>
+      decodeProviderSendTurnInput({
+        threadId: "thread-1",
+        input: "x".repeat(120_001),
+      }),
+    ).toThrow();
+  });
 });

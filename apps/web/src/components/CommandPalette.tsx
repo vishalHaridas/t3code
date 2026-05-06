@@ -32,6 +32,7 @@ import {
 } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useCommandPaletteStore } from "../commandPaletteStore";
+import { useNotebookModeStore } from "../notebookModeStore";
 import { readEnvironmentApi } from "../environmentApi";
 import { readPrimaryEnvironmentDescriptor, usePrimaryEnvironmentId } from "../environments/primary";
 import {
@@ -142,6 +143,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   const open = useCommandPaletteStore((store) => store.open);
   const setOpen = useCommandPaletteStore((store) => store.setOpen);
   const toggleOpen = useCommandPaletteStore((store) => store.toggleOpen);
+  const notebookModeActive = useNotebookModeStore((state) => state.activeProjectKey !== null);
   const keybindings = useServerKeybindings();
   const composerHandleRef = useRef<ChatComposerHandle | null>(null);
   const routeTarget = useParams({
@@ -169,11 +171,20 @@ export function CommandPalette({ children }: { children: ReactNode }) {
       }
       event.preventDefault();
       event.stopPropagation();
+      if (notebookModeActive) {
+        return;
+      }
       toggleOpen();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [keybindings, terminalOpen, toggleOpen]);
+  }, [keybindings, notebookModeActive, terminalOpen, toggleOpen]);
+
+  useEffect(() => {
+    if (notebookModeActive && open) {
+      setOpen(false);
+    }
+  }, [notebookModeActive, open, setOpen]);
 
   return (
     <ComposerHandleContext.Provider value={composerHandleRef}>
