@@ -96,6 +96,7 @@ export interface NotebookSearchThreadResult {
   title: string;
   createdAt: string;
   updatedAt?: string | undefined;
+  messages: NotebookSearchChunkMessage[];
   chunks: NotebookSearchChunk[];
 }
 
@@ -572,35 +573,58 @@ export function prepareNotebookSearchResult(
   const resultThreads = sources.flatMap((source, threadIndex) => {
     const threadSegments = segmentsByThread.get(threadIndex) ?? [];
     if (threadSegments.length === 0) return [];
+    const messagesByOrdinal = new Map(source.messages.map((message) => [message.ordinal, message]));
+    const matchingOrdinals = new Set<number>();
+    for (const segment of threadSegments) {
+      for (const message of segment.messages) {
+        if (matchedTextTerms(message.text, queryTerms).length > 0) {
+          matchingOrdinals.add(message.ordinal);
+        }
+      }
+    }
+
     return [
       {
         threadId: source.thread.id,
         title: source.thread.title,
         createdAt: source.thread.createdAt,
         updatedAt: source.thread.updatedAt,
-        chunks: threadSegments
-          .toSorted(
-            (a, b) => a.startedAt.localeCompare(b.startedAt) || a.startOrdinal - b.startOrdinal,
-          )
-          .map((segment) => ({
-            id: `${source.thread.id}:${segment.startOrdinal}:${segment.endOrdinal}`,
-            text: segment.text,
-            startOrdinal: segment.startOrdinal,
-            endOrdinal: segment.endOrdinal,
-            startedAt: segment.startedAt,
-            endedAt: segment.endedAt,
-            matchedTerms: matchedSegmentTerms(segment, queryTerms),
-            // Keep message structure for the UI. It avoids parsing "### USER"
-            // text back into roles and lets Search reuse chat-like rendering.
-            messages: segment.messages.map((message) => ({
-              id: message.id,
-              role: message.role,
-              text: message.text,
-              createdAt: message.createdAt,
-              ordinal: message.ordinal,
-              matchedTerms: matchedTextTerms(message.text, queryTerms),
-            })),
-          })),
+        messages: source.messages.map((message) => ({
+          id: message.id,
+          role: message.role,
+          text: message.text,
+          createdAt: message.createdAt,
+          ordinal: message.ordinal,
+          matchedTerms: matchedTextTerms(message.text, queryTerms),
+        })),
+        chunks: [...matchingOrdinals]
+          .toSorted((a, b) => a - b)
+          .flatMap((ordinal) => {
+            const message = messagesByOrdinal.get(ordinal);
+            if (!message) return [];
+            const matchedTerms = matchedTextTerms(message.text, queryTerms);
+            return [
+              {
+                id: `${source.thread.id}:${message.ordinal}`,
+                text: formatMessage(message),
+                startOrdinal: message.ordinal,
+                endOrdinal: message.ordinal,
+                startedAt: message.createdAt,
+                endedAt: message.createdAt,
+                matchedTerms,
+                messages: [
+                  {
+                    id: message.id,
+                    role: message.role,
+                    text: message.text,
+                    createdAt: message.createdAt,
+                    ordinal: message.ordinal,
+                    matchedTerms,
+                  },
+                ],
+              },
+            ];
+          }),
       },
     ];
   });

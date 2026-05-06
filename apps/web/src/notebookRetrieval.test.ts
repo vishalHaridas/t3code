@@ -128,9 +128,12 @@ describe("prepareNotebookSearchResult", () => {
 
     expect(result.threads).toHaveLength(1);
     expect(result.threads[0]?.title).toBe("Budget thread");
+    expect(result.threads[0]?.chunks).toHaveLength(2);
     expect(result.threads[0]?.chunks[0]?.matchedTerms).toContain("sourcecharbudget");
     expect(result.threads[0]?.chunks[0]?.text).toContain("sourceCharBudget");
     expect(result.threads[0]?.chunks[0]?.messages[0]?.role).toBe("user");
+    expect(result.threads[0]?.chunks[0]?.messages).toHaveLength(1);
+    expect(result.threads[0]?.messages).toHaveLength(2);
     expect(result.threads[0]?.chunks[0]?.startedAt).toBe("2026-04-25T00:00:01.000Z");
   });
 

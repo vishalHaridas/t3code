@@ -5,6 +5,8 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { clampNotebookPromptCharLimit, getNotebookPromptCharLimit } from "@t3tools/shared/notebook";
 import {
   AlertCircleIcon,
+  ArrowDownIcon,
+  ArrowUpIcon,
   CheckCircle2Icon,
   ChevronDownIcon,
   ChevronRightIcon,
@@ -164,31 +166,54 @@ function highlightChunkText(text: string, terms: readonly string[]) {
   return parts;
 }
 
-function NotebookChunkExcerpt(props: { chunk: NotebookSearchChunk }) {
+function NotebookSearchMessage(props: {
+  message: NotebookSearchChunk["messages"][number];
+  matchedTerms: readonly string[];
+}) {
+  const terms =
+    props.message.matchedTerms.length > 0 ? props.message.matchedTerms : props.matchedTerms;
   return (
-    <article className="border-t border-border/60 first:border-t-0">
-      <div className="h-px bg-border/80" />
-      <div className="divide-y divide-border/40">
-        {props.chunk.messages.map((message) => (
-          <div key={message.id} className="grid grid-cols-[5.75rem_1fr] gap-3 px-3 py-3">
-            <div className="select-none text-right">
-              <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                {message.role}
-              </div>
-              <div className="mt-1 text-[10px] text-muted-foreground/70">
-                {formatNotebookTime(message.createdAt)}
-              </div>
-            </div>
-            <div className="min-w-0 text-sm leading-relaxed text-foreground/90">
-              <div className="whitespace-pre-wrap">
-                {highlightChunkText(message.text, message.matchedTerms)}
-              </div>
-            </div>
-          </div>
-        ))}
+    <div className="grid grid-cols-[5.75rem_1fr] gap-3 px-3 py-3">
+      <div className="select-none text-right">
+        <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          {props.message.role}
+        </div>
+        <div className="mt-1 text-[10px] text-muted-foreground/70">
+          {formatNotebookTime(props.message.createdAt)}
+        </div>
       </div>
-    </article>
+      <div className="min-w-0 text-sm leading-relaxed text-foreground/90">
+        <div className="whitespace-pre-wrap">{highlightChunkText(props.message.text, terms)}</div>
+      </div>
+    </div>
   );
+}
+
+type NotebookSearchRange = {
+  chunkIds: string[];
+  startOrdinal: number;
+  endOrdinal: number;
+  matchedTerms: string[];
+};
+
+function mergeNotebookSearchRanges(chunks: readonly NotebookSearchChunk[]): NotebookSearchRange[] {
+  const ranges: NotebookSearchRange[] = [];
+  for (const chunk of chunks) {
+    const previous = ranges[ranges.length - 1];
+    if (previous && chunk.startOrdinal <= previous.endOrdinal + 1) {
+      previous.chunkIds.push(chunk.id);
+      previous.endOrdinal = Math.max(previous.endOrdinal, chunk.endOrdinal);
+      previous.matchedTerms = [...new Set([...previous.matchedTerms, ...chunk.matchedTerms])];
+      continue;
+    }
+    ranges.push({
+      chunkIds: [chunk.id],
+      startOrdinal: chunk.startOrdinal,
+      endOrdinal: chunk.endOrdinal,
+      matchedTerms: [...chunk.matchedTerms],
+    });
+  }
+  return ranges;
 }
 
 function NotebookSearchResults(props: {
@@ -243,6 +268,42 @@ function NotebookThreadFold(props: {
   collapsed: boolean;
   onToggle: () => void;
 }) {
+  const messageByOrdinal = useMemo(
+    () => new Map(props.thread.messages.map((message) => [message.ordinal, message])),
+    [props.thread.messages],
+  );
+  const [expandedRanges, setExpandedRanges] = useState<
+    Record<string, { start: number; end: number }>
+  >(() => ({}));
+  const chunks = props.thread.chunks.map((chunk) => {
+    const expanded = expandedRanges[chunk.id];
+    return {
+      ...chunk,
+      startOrdinal: expanded?.start ?? chunk.startOrdinal,
+      endOrdinal: expanded?.end ?? chunk.endOrdinal,
+    };
+  });
+  const ranges = mergeNotebookSearchRanges(chunks);
+  const firstOrdinal = props.thread.messages[0]?.ordinal ?? 1;
+  const lastOrdinal = props.thread.messages[props.thread.messages.length - 1]?.ordinal ?? 1;
+  const expandChunk = (chunkId: string, direction: "previous" | "next") => {
+    const chunk = props.thread.chunks.find((candidate) => candidate.id === chunkId);
+    if (!chunk) return;
+    setExpandedRanges((current) => {
+      const existing = current[chunkId] ?? {
+        start: chunk.startOrdinal,
+        end: chunk.endOrdinal,
+      };
+      return {
+        ...current,
+        [chunkId]:
+          direction === "previous"
+            ? { ...existing, start: Math.max(firstOrdinal, existing.start - 1) }
+            : { ...existing, end: Math.min(lastOrdinal, existing.end + 1) },
+      };
+    });
+  };
+
   return (
     <section className="overflow-hidden rounded-lg border border-border bg-card/40">
       <button
@@ -258,10 +319,61 @@ function NotebookThreadFold(props: {
         <span className="min-w-0 flex-1 truncate font-medium">{props.thread.title}</span>
       </button>
       {props.collapsed ? null : (
-        <div>
-          {props.thread.chunks.map((chunk) => (
-            <NotebookChunkExcerpt key={chunk.id} chunk={chunk} />
-          ))}
+        <div className="divide-y divide-border/60">
+          {ranges.map((range) => {
+            const previousChunkId = range.chunkIds[0];
+            const nextChunkId = range.chunkIds[range.chunkIds.length - 1];
+            const canExpandPrevious = range.startOrdinal > firstOrdinal;
+            const canExpandNext = range.endOrdinal < lastOrdinal;
+            const messages = [];
+            for (let ordinal = range.startOrdinal; ordinal <= range.endOrdinal; ordinal += 1) {
+              const message = messageByOrdinal.get(ordinal);
+              if (message) messages.push(message);
+            }
+            return (
+              <article key={range.chunkIds.join(":")} className="group/notebook-search-result">
+                <div className="flex h-7 items-center justify-center border-b border-border/40 bg-muted/20">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-6 text-muted-foreground opacity-70 hover:opacity-100 disabled:opacity-25"
+                    disabled={!canExpandPrevious || !previousChunkId}
+                    title="Reveal previous chat"
+                    onClick={() => {
+                      if (previousChunkId) expandChunk(previousChunkId, "previous");
+                    }}
+                  >
+                    <ArrowUpIcon className="size-3.5" />
+                  </Button>
+                </div>
+                <div className="divide-y divide-border/35">
+                  {messages.map((message) => (
+                    <NotebookSearchMessage
+                      key={message.id}
+                      message={message}
+                      matchedTerms={range.matchedTerms}
+                    />
+                  ))}
+                </div>
+                <div className="flex h-7 items-center justify-center border-t border-border/40 bg-muted/20">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-6 text-muted-foreground opacity-70 hover:opacity-100 disabled:opacity-25"
+                    disabled={!canExpandNext || !nextChunkId}
+                    title="Reveal next chat"
+                    onClick={() => {
+                      if (nextChunkId) expandChunk(nextChunkId, "next");
+                    }}
+                  >
+                    <ArrowDownIcon className="size-3.5" />
+                  </Button>
+                </div>
+              </article>
+            );
+          })}
         </div>
       )}
     </section>
