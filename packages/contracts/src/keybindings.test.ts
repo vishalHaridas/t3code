@@ -47,6 +47,12 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedCommandPalette.command, "commandPalette.toggle");
 
+    const parsedNotebookEnter = yield* decode(KeybindingRule, {
+      key: "ctrl+shift+f",
+      command: "notebook.enter",
+    });
+    assert.strictEqual(parsedNotebookEnter.command, "notebook.enter");
+
     const parsedLocal = yield* decode(KeybindingRule, {
       key: "mod+shift+n",
       command: "chat.newLocal",

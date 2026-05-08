@@ -1,6 +1,6 @@
 import type { ModelSelection, ProjectId, ProviderKind, ServerProvider } from "@t3tools/contracts";
 import { ThreadId as ThreadIdSchema } from "@t3tools/contracts";
-import { parseScopedThreadKey } from "@t3tools/client-runtime";
+import { parseScopedThreadKey, scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
 import { createModelSelection } from "@t3tools/shared/model";
 import { clampNotebookPromptCharLimit, getNotebookPromptCharLimit } from "@t3tools/shared/notebook";
 import {
@@ -15,6 +15,8 @@ import {
   SearchIcon,
   SendIcon,
   SquareIcon,
+  SquareCheckBigIcon,
+  TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -28,6 +30,7 @@ import {
   DraftId,
 } from "../composerDraftStore";
 import { readEnvironmentApi } from "../environmentApi";
+import { isElectron } from "../env";
 import { useSettings } from "../hooks/useSettings";
 import { useNotebookModeStore } from "../notebookModeStore";
 import type {
@@ -35,20 +38,54 @@ import type {
   NotebookSearchResult,
   NotebookSearchThreadResult,
 } from "../notebookRetrieval";
-import { prepareNotebookSearchResult, prepareNotebookSources } from "../notebookRetrieval";
+import { prepareNotebookSources } from "../notebookRetrieval";
+import NotebookSearchWorker from "../notebookSearch.worker?worker";
+import type { NotebookSearchWorkerResponse } from "../notebookSearch.worker";
 import { formatContextWindowTokens } from "../lib/contextWindow";
+import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
 import { useServerConfig, useServerKeybindings } from "../rpc/serverState";
-import { selectProjectByRef, selectThreadByRef, useStore } from "../store";
+import {
+  selectProjectByRef,
+  selectProjectsAcrossEnvironments,
+  selectSidebarThreadsAcrossEnvironments,
+  selectThreadByRef,
+  useStore,
+} from "../store";
 import ChatMarkdown from "./ChatMarkdown";
 import { MessageCopyButton } from "./chat/MessageCopyButton";
 import { ProviderModelPicker } from "./chat/ProviderModelPicker";
+import { NotebookModeIcon } from "./NotebookModeIcon";
+import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
+import { SidebarTrigger } from "./ui/sidebar";
 
-const NOTEBOOK_SOURCE_BUDGET_SAFETY_MARGIN = 1_000;
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 
-function getCompleteSourcePressure(input: { estimatedTokens: number; promptLimitChars: number }) {
+function getContextHealth(input: {
+  estimatedTokens: number;
+  promptLimitChars: number;
+  promptTooLarge: boolean;
+  hasSources: boolean;
+}) {
   const hardLimit = Math.max(1, Math.floor(input.promptLimitChars / 4));
+  if (!input.hasSources) {
+    return {
+      className: "text-muted-foreground",
+      icon: "healthy" as const,
+      label: "Context Health",
+      title: "Select sources to estimate how reliably Ask can use the available context.",
+      hardLimit,
+    };
+  }
+  if (input.promptTooLarge) {
+    return {
+      className: "text-destructive",
+      icon: "error" as const,
+      label: "Ask prompt too large",
+      title: "Prompt exceeds the available context budget. Deselect sources to continue.",
+      hardLimit,
+    };
+  }
   const softLimit = hardLimit * 0.3;
   const collapseStart = hardLimit * 0.45;
   const collapseEnd = hardLimit * 0.8;
@@ -66,40 +103,45 @@ function getCompleteSourcePressure(input: { estimatedTokens: number; promptLimit
 
   if (danger >= 0.9) {
     return {
-      className:
-        "border-red-950/40 bg-red-950/25 text-red-950 dark:border-red-300/25 dark:bg-red-950/35 dark:text-red-200",
-      label: "Over budget",
+      className: "text-red-800 dark:text-red-200",
+      icon: "warning" as const,
+      label: "Context Health: Unstable",
+      title: "High risk of context confusion, incorrect associations, and unreliable retrieval.",
       hardLimit,
     };
   }
   if (danger >= 0.7) {
     return {
-      className:
-        "border-red-700/35 bg-red-500/12 text-red-800 dark:border-red-300/25 dark:bg-red-950/30 dark:text-red-200",
-      label: "At the edge",
+      className: "text-red-700 dark:text-red-200",
+      icon: "warning" as const,
+      label: "Context Health: Degrading",
+      title: "Important details may be overlooked as context becomes dense and semantically noisy.",
       hardLimit,
     };
   }
   if (danger >= 0.5) {
     return {
-      className:
-        "border-orange-600/35 bg-orange-500/12 text-orange-800 dark:border-orange-300/25 dark:bg-orange-950/28 dark:text-orange-200",
-      label: "Getting tight",
+      className: "text-orange-800 dark:text-orange-200",
+      icon: "healthy" as const,
+      label: "Context Health: Strained",
+      title: "Growing context size may reduce recall accuracy and increase missed details.",
       hardLimit,
     };
   }
   if (danger >= 0.3) {
     return {
-      className:
-        "border-yellow-600/35 bg-yellow-500/12 text-yellow-800 dark:border-yellow-300/25 dark:bg-yellow-950/25 dark:text-yellow-100",
-      label: "Moderate",
+      className: "text-yellow-800 dark:text-yellow-100",
+      icon: "healthy" as const,
+      label: "Context Health: Strained",
+      title: "Growing context size may reduce recall accuracy and increase missed details.",
       hardLimit,
     };
   }
   return {
-    className:
-      "border-emerald-600/30 bg-emerald-500/10 text-emerald-800 dark:border-emerald-300/25 dark:bg-emerald-950/25 dark:text-emerald-100",
-    label: "Comfortable",
+    className: "text-emerald-800 dark:text-emerald-100",
+    icon: "healthy" as const,
+    label: "Context Health: Healthy",
+    title: "The model should reliably track context and retrieve relevant details.",
     hardLimit,
   };
 }
@@ -332,21 +374,17 @@ function NotebookThreadFold(props: {
             }
             return (
               <article key={range.chunkIds.join(":")} className="group/notebook-search-result">
-                <div className="flex h-7 items-center justify-center border-b border-border/40 bg-muted/20">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="size-6 text-muted-foreground opacity-70 hover:opacity-100 disabled:opacity-25"
-                    disabled={!canExpandPrevious || !previousChunkId}
-                    title="Reveal previous chat"
-                    onClick={() => {
-                      if (previousChunkId) expandChunk(previousChunkId, "previous");
-                    }}
-                  >
-                    <ArrowUpIcon className="size-3.5" />
-                  </Button>
-                </div>
+                <button
+                  type="button"
+                  className="flex h-5 w-full items-center justify-center border-b border-border/40 bg-muted/10 text-muted-foreground/25 transition-colors hover:bg-muted/30 hover:text-foreground/75 disabled:cursor-default disabled:hover:bg-muted/10 disabled:hover:text-muted-foreground/25"
+                  disabled={!canExpandPrevious || !previousChunkId}
+                  title="Reveal previous chat"
+                  onClick={() => {
+                    if (previousChunkId) expandChunk(previousChunkId, "previous");
+                  }}
+                >
+                  <ArrowUpIcon className="size-3.5" />
+                </button>
                 <div className="divide-y divide-border/35">
                   {messages.map((message) => (
                     <NotebookSearchMessage
@@ -356,21 +394,17 @@ function NotebookThreadFold(props: {
                     />
                   ))}
                 </div>
-                <div className="flex h-7 items-center justify-center border-t border-border/40 bg-muted/20">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="size-6 text-muted-foreground opacity-70 hover:opacity-100 disabled:opacity-25"
-                    disabled={!canExpandNext || !nextChunkId}
-                    title="Reveal next chat"
-                    onClick={() => {
-                      if (nextChunkId) expandChunk(nextChunkId, "next");
-                    }}
-                  >
-                    <ArrowDownIcon className="size-3.5" />
-                  </Button>
-                </div>
+                <button
+                  type="button"
+                  className="flex h-5 w-full items-center justify-center border-t border-border/40 bg-muted/10 text-muted-foreground/25 transition-colors hover:bg-muted/30 hover:text-foreground/75 disabled:cursor-default disabled:hover:bg-muted/10 disabled:hover:text-muted-foreground/25"
+                  disabled={!canExpandNext || !nextChunkId}
+                  title="Reveal next chat"
+                  onClick={() => {
+                    if (nextChunkId) expandChunk(nextChunkId, "next");
+                  }}
+                >
+                  <ArrowDownIcon className="size-3.5" />
+                </button>
               </article>
             );
           })}
@@ -395,11 +429,19 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
   const activeProjectKey = useNotebookModeStore((state) => state.activeProjectKey);
   const selectedThreadKeys = useNotebookModeStore((state) => state.selectedThreadKeys);
   const mode = useNotebookModeStore((state) => state.mode);
+  const searchRun = useNotebookModeStore((state) => state.searchRun);
   const searchResult = useNotebookModeStore((state) => state.searchResult);
   const askResult = useNotebookModeStore((state) => state.askResult);
   const setMode = useNotebookModeStore((state) => state.setMode);
+  const setSourceAddBlocked = useNotebookModeStore((state) => state.setSourceAddBlocked);
+  const setSourceThreads = useNotebookModeStore((state) => state.setSourceThreads);
   const clearResults = useNotebookModeStore((state) => state.clearResults);
-  const setSearchResult = useNotebookModeStore((state) => state.setSearchResult);
+  const clearSourceThreads = useNotebookModeStore((state) => state.clearSourceThreads);
+  const startSearch = useNotebookModeStore((state) => state.startSearch);
+  const finishSearch = useNotebookModeStore((state) => state.finishSearch);
+  const failSearch = useNotebookModeStore((state) => state.failSearch);
+  const cancelSearch = useNotebookModeStore((state) => state.cancelSearch);
+  const stopSearch = useNotebookModeStore((state) => state.stopSearch);
   const startAsk = useNotebookModeStore((state) => state.startAsk);
   const appendAskDelta = useNotebookModeStore((state) => state.appendAskDelta);
   const setAskUsage = useNotebookModeStore((state) => state.setAskUsage);
@@ -413,12 +455,46 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
   );
   const releaseDetailSubscriptionsRef = useRef<ReadonlyArray<() => void>>([]);
   const streamUnsubscribeRef = useRef<(() => void) | null>(null);
+  const searchWorkerRef = useRef<Worker | null>(null);
+  const searchRunIdRef = useRef<string | null>(null);
   const [question, setQuestion] = useState("");
   const settings = useSettings();
   const keybindings = useServerKeybindings();
   const serverConfig = useServerConfig();
   const providers = serverConfig?.providers ?? EMPTY_PROVIDERS;
   const providerModels = useMemo(() => modelOptionsByProvider(providers), [providers]);
+  const allProjectThreadKeys = useStore(
+    useShallow(
+      useMemo(
+        () => (state) => {
+          if (!activeProjectKey) return [];
+          return selectSidebarThreadsAcrossEnvironments(state).flatMap((thread) => {
+            const threadProject = selectProjectByRef(state, {
+              environmentId: thread.environmentId,
+              projectId: thread.projectId,
+            });
+            if (!threadProject) return [];
+            const threadProjectKey = deriveLogicalProjectKeyFromSettings(threadProject, settings);
+            if (threadProjectKey !== activeProjectKey) return [];
+            return [scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))];
+          });
+        },
+        [activeProjectKey, settings],
+      ),
+    ),
+  );
+  const activeNotebookProject = useStore(
+    useMemo(
+      () => (state) => {
+        if (!activeProjectKey) return undefined;
+        return selectProjectsAcrossEnvironments(state).find(
+          (candidate) =>
+            deriveLogicalProjectKeyFromSettings(candidate, settings) === activeProjectKey,
+        );
+      },
+      [activeProjectKey, settings],
+    ),
+  );
   const project = useStore(
     useMemo(
       () => (state) => {
@@ -477,22 +553,9 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
     [selectedModelSelection],
   );
 
-  const sourceCharBudget = useMemo(() => {
-    const promptWithoutSources = buildNotebookPrompt({
-      preparedSource: "",
-      question: question || " ",
-    });
-    return Math.max(
-      0,
-      notebookPromptLimit - promptWithoutSources.length - NOTEBOOK_SOURCE_BUDGET_SAFETY_MARGIN,
-    );
-  }, [notebookPromptLimit, question]);
   const preparedAskSources = useMemo(
-    () =>
-      prepareNotebookSources(selectedThreads, question || " ", {
-        sourceCharBudget,
-      }),
-    [question, selectedThreads, sourceCharBudget],
+    () => prepareNotebookSources(selectedThreads, question || " "),
+    [question, selectedThreads],
   );
   const loadingSourceCount = selectedRefs.length - selectedThreads.length;
   const promptPreview = useMemo(
@@ -504,16 +567,23 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
     [preparedAskSources.promptSource, question],
   );
   const promptTooLarge = promptPreview.length > notebookPromptLimit;
+  const askPromptTooLarge = mode === "ask" && promptTooLarge;
+  const searchInFlight = searchRun?.running === true;
   const askInFlight = askResult?.streaming === true;
-  const mutableControlsDisabled = askInFlight;
+  const mutableControlsDisabled = askInFlight || searchInFlight;
   const canSubmit =
     selectedRefs.length > 0 &&
     loadingSourceCount === 0 &&
     question.trim().length > 0 &&
+    !searchInFlight &&
     !askInFlight &&
-    !promptTooLarge &&
     Boolean(project?.cwd) &&
-    (mode === "search" || Boolean(selectedModelSelection));
+    (mode === "search" || (!askPromptTooLarge && Boolean(selectedModelSelection)));
+
+  useEffect(() => {
+    setSourceAddBlocked(askPromptTooLarge);
+    return () => setSourceAddBlocked(false);
+  }, [askPromptTooLarge, setSourceAddBlocked]);
 
   useEffect(() => {
     let cancelled = false;
@@ -537,17 +607,72 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
     return () => {
       streamUnsubscribeRef.current?.();
       streamUnsubscribeRef.current = null;
+      searchWorkerRef.current?.terminate();
+      searchWorkerRef.current = null;
+      searchRunIdRef.current = null;
     };
+  }, []);
+
+  const terminateSearchWorker = useCallback(() => {
+    // Terminating is the hard cancel: the browser stops the worker even if it is
+    // in the middle of scanning a huge message corpus.
+    searchWorkerRef.current?.terminate();
+    searchWorkerRef.current = null;
+    searchRunIdRef.current = null;
   }, []);
 
   const submitSearch = useCallback(() => {
     const query = question.trim();
     if (!canSubmit || query.length === 0) return;
-    // Search is pure client-side retrieval. It clears any prior answer/result
-    // and replaces it with the folded chunk result for this query.
-    const result = prepareNotebookSearchResult(selectedThreads, query);
-    setSearchResult(query, result);
-  }, [canSubmit, question, selectedThreads, setSearchResult]);
+    terminateSearchWorker();
+    const runId = crypto.randomUUID();
+    const worker = new NotebookSearchWorker();
+    searchWorkerRef.current = worker;
+    searchRunIdRef.current = runId;
+    startSearch(query);
+
+    worker.addEventListener("message", (event: MessageEvent<NotebookSearchWorkerResponse>) => {
+      const message = event.data;
+      if (message.runId !== searchRunIdRef.current) return;
+      terminateSearchWorker();
+      if (message.type === "result") {
+        finishSearch(query, message.result);
+        return;
+      }
+      if (message.type === "error") {
+        failSearch(query, message.message);
+        return;
+      }
+      stopSearch();
+    });
+    worker.addEventListener("error", () => {
+      if (searchRunIdRef.current !== runId) return;
+      terminateSearchWorker();
+      failSearch(query, "Notebook search worker failed.");
+    });
+
+    // Threads are copied into the worker by structured clone. That is deliberate
+    // for this prototype: the worker receives a stable snapshot of the selected
+    // sources for the submitted query.
+    worker.postMessage(
+      {
+        type: "search",
+        runId,
+        query,
+        threads: selectedThreads,
+      },
+      [],
+    );
+  }, [
+    canSubmit,
+    failSearch,
+    finishSearch,
+    question,
+    selectedThreads,
+    startSearch,
+    stopSearch,
+    terminateSearchWorker,
+  ]);
 
   const submitAsk = useCallback(() => {
     const query = question.trim();
@@ -555,25 +680,12 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
     const api = readEnvironmentApi(project.environmentId);
     if (!api) return;
 
-    const visibleSources = prepareNotebookSearchResult(selectedThreads, query);
-    if (preparedAskSources.mode === "retrieved" && visibleSources.threads.length === 0) {
-      startAsk(query, {
-        sourceMode: preparedAskSources.mode,
-        sources: visibleSources,
-      });
-      failAsk("No matching sources were found in the selected threads.");
-      return;
-    }
-
     const prompt = buildNotebookPrompt({
       preparedSource: preparedAskSources.promptSource,
       question: query,
     });
 
-    startAsk(query, {
-      sourceMode: preparedAskSources.mode,
-      sources: visibleSources,
-    });
+    startAsk(query);
 
     streamUnsubscribeRef.current?.();
     streamUnsubscribeRef.current = null;
@@ -620,12 +732,10 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
     canSubmit,
     failAsk,
     finishAsk,
-    preparedAskSources.mode,
     preparedAskSources.promptSource,
     project,
     question,
     selectedModelSelection,
-    selectedThreads,
     setAskUsage,
     startAsk,
   ]);
@@ -644,26 +754,54 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
     stopAsk();
   }, [stopAsk]);
 
+  const stopRunningSearch = useCallback(() => {
+    terminateSearchWorker();
+    stopSearch();
+  }, [stopSearch, terminateSearchWorker]);
+
   const handleQuestionChange = useCallback(
     (value: string) => {
+      if (searchWorkerRef.current) {
+        terminateSearchWorker();
+        cancelSearch();
+      }
       setQuestion(value);
       if (value.trim().length === 0) {
         clearResults();
       }
     },
-    [clearResults],
+    [cancelSearch, clearResults, terminateSearchWorker],
   );
+  const clearNotebookSources = useCallback(() => {
+    if (selectedRefs.length === 0) {
+      if (allProjectThreadKeys.length === 0) return;
+      setSourceThreads(allProjectThreadKeys);
+      clearResults();
+      return;
+    }
+    clearSourceThreads();
+    clearResults();
+  }, [
+    allProjectThreadKeys,
+    clearResults,
+    clearSourceThreads,
+    selectedRefs.length,
+    setSourceThreads,
+  ]);
 
   const sourceLabel =
-    selectedRefs.length === 0
-      ? "No sources"
-      : loadingSourceCount > 0
-        ? `${selectedThreads.length}/${selectedRefs.length} sources loaded`
-        : `${selectedRefs.length} source${selectedRefs.length === 1 ? "" : "s"} selected`;
-  const completeSourcePressure = getCompleteSourcePressure({
+    loadingSourceCount > 0
+      ? `${selectedThreads.length}/${selectedRefs.length}`
+      : selectedRefs.length;
+  const contextHealth = getContextHealth({
     estimatedTokens: preparedAskSources.estimatedTokens,
     promptLimitChars: notebookPromptLimit,
+    promptTooLarge: askPromptTooLarge,
+    hasSources: selectedRefs.length > 0,
   });
+  const sourceTitle = `${preparedAskSources.estimatedTokens.toLocaleString()} / ${contextHealth.hardLimit.toLocaleString()} est. ask tokens; ${preparedAskSources.sourceChars.toLocaleString()} source chars${
+    selectedRefs.length > 0 ? ". Click to deselect all sources." : ". Click to select all sources."
+  }`;
   const askUsageFooter = askResult
     ? formatNotebookUsageFooter({
         inputTokens: askResult.usage?.lastInputTokens ?? askResult.usage?.inputTokens ?? null,
@@ -673,27 +811,53 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
-      <header className="flex h-[52px] shrink-0 items-center gap-3 border-b border-border px-5">
-        <div className="min-w-0 flex-1">
-          <h2 className="truncate text-sm font-medium">Notebook mode</h2>
+      <header
+        className={cn(
+          "border-b border-border px-3 sm:px-5",
+          isElectron
+            ? "drag-region flex h-[52px] items-center wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]"
+            : "py-2 sm:py-3",
+        )}
+      >
+        <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2">
+          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
+            <SidebarTrigger className="size-7 shrink-0 md:hidden" />
+            <h2 className="min-w-0 shrink truncate text-sm font-medium text-foreground">
+              Notebook mode
+            </h2>
+            {activeNotebookProject ? (
+              <Badge variant="outline" className="min-w-0 shrink overflow-hidden">
+                <span className="min-w-0 truncate">{activeNotebookProject.name}</span>
+              </Badge>
+            ) : null}
+          </div>
+          <div className="flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3">
+            <Button
+              className="shrink-0"
+              variant="outline"
+              size="xs"
+              onClick={exitNotebookMode}
+              disabled={askInFlight}
+              title="Exit notebook mode"
+              aria-label="Exit notebook mode"
+            >
+              <XIcon className="size-3" />
+            </Button>
+          </div>
         </div>
-        <Button variant="outline" size="sm" onClick={exitNotebookMode} disabled={askInFlight}>
-          <XIcon className="size-3.5" />
-          Exit
-        </Button>
       </header>
 
       <div className="shrink-0 border-b border-border px-5 py-4">
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="inline-flex rounded-lg border border-border bg-muted/30 p-1">
+            <div className="inline-flex gap-1">
               {(["search", "ask"] as const).map((candidate) => (
                 <button
                   key={candidate}
                   type="button"
-                  className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                  className={`rounded px-3 py-1.5 text-sm font-medium transition-colors ${
                     mode === candidate
-                      ? "bg-background text-foreground shadow-xs"
+                      ? "bg-muted/50 text-foreground"
                       : "text-muted-foreground hover:text-foreground"
                   }`}
                   disabled={mutableControlsDisabled}
@@ -744,54 +908,58 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <span
-                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border/70 bg-muted/30 px-2 py-1"
-                  title={`${preparedAskSources.sourceChars.toLocaleString()} source chars, ${preparedAskSources.estimatedTokens.toLocaleString()} est. ask tokens`}
+              <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                <button
+                  type="button"
+                  className="group inline-flex h-6 w-10 cursor-pointer items-center gap-1 rounded px-1 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                  title={sourceTitle}
+                  onClick={clearNotebookSources}
                 >
-                  <FileTextIcon className="size-3.5" />
-                  {sourceLabel}
-                </span>
-                {selectedRefs.length > 0 ? (
-                  <span
-                    className={cn(
-                      "inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 transition-colors",
-                      preparedAskSources.mode === "complete"
-                        ? completeSourcePressure.className
-                        : "border-border/70 bg-muted/30",
-                    )}
-                    title={
-                      preparedAskSources.mode === "complete"
-                        ? `${completeSourcePressure.label}: ${preparedAskSources.estimatedTokens.toLocaleString()} / ${completeSourcePressure.hardLimit.toLocaleString()} est. ask tokens`
-                        : "Relevant chunks are retrieved from selected messages"
-                    }
-                  >
-                    {preparedAskSources.mode === "complete" ? (
-                      <CheckCircle2Icon className="size-3.5" />
+                  <span className="relative inline-flex size-3.5 shrink-0 items-center justify-center">
+                    {selectedRefs.length > 0 ? (
+                      <>
+                        <FileTextIcon className="absolute size-3.5 transition-opacity group-hover:opacity-0" />
+                        <XIcon className="absolute size-3.5 opacity-0 transition-opacity group-hover:opacity-100" />
+                      </>
                     ) : (
-                      <SearchIcon className="size-3.5" />
+                      <>
+                        <FileTextIcon className="absolute size-3.5 transition-opacity group-hover:opacity-0" />
+                        <SquareCheckBigIcon className="absolute size-3.5 opacity-0 transition-opacity group-hover:opacity-100" />
+                      </>
                     )}
-                    {preparedAskSources.mode === "complete"
-                      ? "Complete source"
-                      : "Retrieved source"}
                   </span>
-                ) : null}
-                {promptTooLarge ? (
-                  <span
-                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-destructive"
-                    title={`${preparedAskSources.estimatedTokens.toLocaleString()} est. ask tokens`}
-                  >
-                    <AlertCircleIcon className="size-3.5" />
-                    Ask prompt too large
-                  </span>
+                  <span className="w-3 text-left tabular-nums">{sourceLabel}</span>
+                </button>
+                {mode === "ask" ? (
+                  <>
+                    <span className="h-4 w-px bg-border/70" aria-hidden="true" />
+                    <span
+                      className={cn(
+                        "inline-flex h-6 cursor-help items-center gap-1.5 transition-colors",
+                        contextHealth.className,
+                      )}
+                      title={contextHealth.title}
+                    >
+                      {contextHealth.icon === "error" ? (
+                        <AlertCircleIcon className="size-3.5" />
+                      ) : contextHealth.icon === "warning" ? (
+                        <TriangleAlertIcon className="size-3.5" />
+                      ) : (
+                        <CheckCircle2Icon className="size-3.5" />
+                      )}
+                      {contextHealth.label}
+                    </span>
+                  </>
                 ) : null}
               </div>
               <Button
-                disabled={!askInFlight && !canSubmit}
-                onClick={askInFlight ? stopStreamingAsk : submit}
-                title={askInFlight ? "Stop generation" : undefined}
+                disabled={!searchInFlight && !askInFlight && !canSubmit}
+                onClick={
+                  searchInFlight ? stopRunningSearch : askInFlight ? stopStreamingAsk : submit
+                }
+                title={searchInFlight ? "Stop search" : askInFlight ? "Stop generation" : undefined}
               >
-                {askInFlight ? (
+                {searchInFlight || askInFlight ? (
                   <SquareIcon className="size-4 fill-current" />
                 ) : mode === "search" ? (
                   <SearchIcon className="size-4" />
@@ -806,12 +974,57 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
 
       <main className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
         <div className="mx-auto w-full max-w-5xl">
-          {!searchResult && !askResult ? (
-            <div className="flex min-h-[42vh] items-center justify-center px-5 text-center text-sm text-muted-foreground">
-              <p className="max-w-md leading-relaxed">
-                Select one or more threads, enter a query, then run Search for folded chunks or Ask
-                for one model-backed answer.
-              </p>
+          {!searchRun && !searchResult && !askResult ? (
+            <div className="flex min-h-[42vh] items-center justify-center px-5 text-muted-foreground">
+              <div className="w-full max-w-2xl">
+                <div className="mb-8 flex items-center gap-4">
+                  <span className="shrink-0 font-mono text-[11px] uppercase tracking-[0.22em] text-muted-foreground/70">
+                    Notebook
+                  </span>
+                  <span className="h-px flex-1 bg-border/70" aria-hidden="true" />
+                </div>
+                <div className="space-y-5">
+                  <p className="text-xl font-medium tracking-normal text-foreground/90">
+                    Select one or more threads,{" "}
+                    <span className="font-normal text-muted-foreground">then enter a query.</span>
+                  </p>
+                  <div className="space-y-3 pl-1">
+                    <div className="grid grid-cols-[1.5rem_1fr] items-baseline gap-3 text-sm">
+                      <SearchIcon className="size-4 self-center text-muted-foreground/70" />
+                      <span className="min-w-0 truncate leading-relaxed">
+                        <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-foreground/80">
+                          Search
+                        </span>{" "}
+                        selected thread conversations for exact matches.
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-[1.5rem_1fr] items-baseline gap-3 text-sm">
+                      <NotebookModeIcon className="size-4 self-center text-muted-foreground/70" />
+                      <span className="min-w-0 truncate leading-relaxed">
+                        <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-foreground/80">
+                          Ask
+                        </span>{" "}
+                        across the selected conversation history.
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {searchRun ? (
+            <div className="mb-3 flex items-center gap-2 px-1 py-2 text-sm text-muted-foreground">
+              {searchRun.running ? (
+                <>
+                  <Loader2Icon className="size-4 animate-spin" />
+                  Searching...
+                </>
+              ) : searchRun.error ? (
+                <span className="text-destructive">{searchRun.error}</span>
+              ) : searchRun.stopped ? (
+                <span>Search stopped.</span>
+              ) : null}
             </div>
           ) : null}
 
@@ -876,20 +1089,6 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
                   </div>
                 )}
               </section>
-
-              {askResult.sources && askResult.sourceMode === "retrieved" && !askResult.streaming ? (
-                <details className="rounded-lg border border-border bg-card/40">
-                  <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
-                    Sources
-                  </summary>
-                  <div className="border-t border-border p-3">
-                    <NotebookSearchResults
-                      result={askResult.sources}
-                      title="Retrieved chunks sent to Ask"
-                    />
-                  </div>
-                </details>
-              ) : null}
             </div>
           ) : null}
         </div>

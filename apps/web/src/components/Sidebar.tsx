@@ -11,6 +11,7 @@ import {
   SquarePenIcon,
   TerminalIcon,
   TriangleAlertIcon,
+  XIcon,
 } from "lucide-react";
 import {
   prStatusIndicator,
@@ -148,6 +149,7 @@ import {
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import { useNotebookModeStore } from "../notebookModeStore";
+import { NotebookModeIcon } from "./NotebookModeIcon";
 import {
   getSidebarThreadIdsToPrewarm,
   resolveAdjacentThreadId,
@@ -335,6 +337,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       Boolean(state.searchResult || state.askResult || state.lastSubmittedQuery) ||
       state.askResult?.streaming === true,
   );
+  const notebookSourceAddBlocked = useNotebookModeStore((state) => state.sourceAddBlocked);
   const toggleNotebookSourceThread = useNotebookModeStore((state) => state.toggleSourceThread);
   const hasSelection = useThreadSelectionStore((state) => state.selectedThreadKeys.size > 0);
   const runningTerminalIds = useTerminalStateStore(
@@ -371,6 +374,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   });
   const effectiveIsActive = notebookModeActive ? false : isActive;
   const effectiveIsSelected = notebookModeActive ? isNotebookSourceSelected : isSelected;
+  const notebookSourceAddDisabled =
+    notebookModeActive && notebookSourceAddBlocked && !isNotebookSourceSelected;
   const isHighlighted = effectiveIsActive || effectiveIsSelected;
   const isThreadRunning =
     thread.session?.status === "running" && thread.session.activeTurnId != null;
@@ -412,7 +417,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       if (notebookModeActive) {
         event.preventDefault();
         event.stopPropagation();
-        if (notebookSourcesLocked) return;
+        if (notebookSourcesLocked || notebookSourceAddDisabled) return;
         toggleNotebookSourceThread(threadKey);
         return;
       }
@@ -421,6 +426,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     [
       handleThreadClick,
       notebookModeActive,
+      notebookSourceAddDisabled,
       orderedProjectThreadKeys,
       threadKey,
       threadRef,
@@ -433,7 +439,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
       if (notebookModeActive) {
-        if (notebookSourcesLocked) return;
+        if (notebookSourcesLocked || notebookSourceAddDisabled) return;
         toggleNotebookSourceThread(threadKey);
         return;
       }
@@ -442,6 +448,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     [
       navigateToThread,
       notebookModeActive,
+      notebookSourceAddDisabled,
       threadKey,
       threadRef,
       toggleNotebookSourceThread,
@@ -587,7 +594,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         className={`${resolveThreadRowClassName({
           isActive: effectiveIsActive,
           isSelected: effectiveIsSelected,
-        })} relative isolate`}
+        })} relative isolate ${
+          notebookSourceAddDisabled
+            ? "cursor-not-allowed hover:bg-transparent hover:text-muted-foreground"
+            : ""
+        }`}
         onClick={handleRowClick}
         onKeyDown={handleRowKeyDown}
         onContextMenu={handleRowContextMenu}
@@ -604,14 +615,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               className={`inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md border transition-colors ${
                 isNotebookSourceSelected
                   ? "border-primary bg-primary text-primary-foreground"
-                  : "border-border bg-background text-muted-foreground hover:text-foreground"
+                  : notebookSourceAddDisabled
+                    ? "cursor-not-allowed border-border bg-background text-muted-foreground opacity-45"
+                    : "border-border bg-background text-muted-foreground hover:text-foreground"
               } ${notebookSourcesLocked ? "cursor-not-allowed opacity-45" : ""}`}
-              disabled={notebookSourcesLocked}
+              disabled={notebookSourcesLocked || notebookSourceAddDisabled}
               onPointerDown={stopPropagationOnPointerDown}
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                if (notebookSourcesLocked) return;
+                if (notebookSourcesLocked || notebookSourceAddDisabled) return;
                 toggleNotebookSourceThread(threadKey);
               }}
             >
@@ -964,6 +977,7 @@ interface SidebarProjectItemProps {
   project: SidebarProjectSnapshot;
   isThreadListExpanded: boolean;
   activeRouteThreadKey: string | null;
+  notebookShortcutLabel: string | null;
   newThreadShortcutLabel: string | null;
   handleNewThread: ReturnType<typeof useNewThreadHandler>["handleNewThread"];
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
@@ -984,6 +998,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     project,
     isThreadListExpanded,
     activeRouteThreadKey,
+    notebookShortcutLabel,
     newThreadShortcutLabel,
     handleNewThread,
     archiveThread,
@@ -2076,7 +2091,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           size="sm"
           className={`gap-2 px-2 py-1.5 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground ${
             isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
-          } ${notebookModeActive && !isNotebookProject ? "pointer-events-none opacity-45" : ""}`}
+          } ${isNotebookProject ? "pr-8" : ""} ${
+            notebookModeActive && !isNotebookProject ? "pointer-events-none opacity-45" : ""
+          }`}
           {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.attributes : {})}
           {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.listeners : {})}
           onPointerDownCapture={handleProjectButtonPointerDownCapture}
@@ -2131,7 +2148,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                       ? "Remote project"
                       : "Available in multiple environments"
                   }
-                  className="pointer-events-none absolute top-1 right-1.5 inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/50 transition-opacity duration-150 group-hover/project-header:opacity-0 group-focus-within/project-header:opacity-0"
+                  className={`pointer-events-none absolute top-1 right-1.5 inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/50 transition-opacity duration-150 group-hover/project-header:opacity-0 group-focus-within/project-header:opacity-0 ${
+                    isNotebookProject ? "opacity-0" : ""
+                  }`}
                 />
               }
             >
@@ -2143,10 +2162,16 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           </Tooltip>
         )}
         {!notebookModeActive || isNotebookProject ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <div className="pointer-events-none absolute top-1 right-1.5 flex opacity-0 transition-opacity duration-150 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100">
+          <div
+            className={`absolute top-1 right-1.5 flex transition-opacity duration-150 ${
+              isNotebookProject
+                ? "pointer-events-auto opacity-100"
+                : "pointer-events-none opacity-0 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100"
+            }`}
+          >
+            <Tooltip>
+              <TooltipTrigger
+                render={
                   <button
                     type="button"
                     aria-label={
@@ -2155,13 +2180,33 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                         : `Open notebook mode for ${project.displayName}`
                     }
                     className={`inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 hover:bg-secondary hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring ${
-                      isNotebookProject ? "bg-secondary text-foreground" : ""
+                      isNotebookProject ? "group/notebook-toggle bg-secondary text-foreground" : ""
                     }`}
                     onClick={handleNotebookModeClick}
                   >
-                    <SearchIcon className="size-3.5" />
+                    {isNotebookProject ? (
+                      <span className="relative inline-flex size-3.5 items-center justify-center">
+                        <NotebookModeIcon className="absolute size-3.5 transition-opacity group-hover/notebook-toggle:opacity-0" />
+                        <XIcon className="absolute size-3.5 opacity-0 transition-opacity group-hover/notebook-toggle:opacity-100" />
+                      </span>
+                    ) : (
+                      <NotebookModeIcon className="size-3.5" />
+                    )}
                   </button>
-                  {!notebookModeActive ? (
+                }
+              />
+              <TooltipPopup side="top">
+                {isNotebookProject
+                  ? "Exit notebook mode"
+                  : notebookShortcutLabel
+                    ? `Notebook mode (${notebookShortcutLabel})`
+                    : "Notebook mode"}
+              </TooltipPopup>
+            </Tooltip>
+            {!notebookModeActive ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
                     <button
                       type="button"
                       aria-label={`Create new thread in ${project.displayName}`}
@@ -2171,18 +2216,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                     >
                       <SquarePenIcon className="size-3.5" />
                     </button>
-                  ) : null}
-                </div>
-              }
-            />
-            <TooltipPopup side="top">
-              {isNotebookProject
-                ? "Exit notebook mode"
-                : newThreadShortcutLabel
-                  ? `Notebook mode / New thread (${newThreadShortcutLabel})`
-                  : "Notebook mode / New thread"}
-            </TooltipPopup>
-          </Tooltip>
+                  }
+                />
+                <TooltipPopup side="top">
+                  {newThreadShortcutLabel ? `New thread (${newThreadShortcutLabel})` : "New thread"}
+                </TooltipPopup>
+              </Tooltip>
+            ) : null}
+          </div>
         ) : null}
       </div>
 
@@ -2597,6 +2638,7 @@ interface SidebarProjectsContentProps {
   expandedThreadListsByProject: ReadonlySet<string>;
   activeRouteProjectKey: string | null;
   routeThreadKey: string | null;
+  notebookShortcutLabel: string | null;
   newThreadShortcutLabel: string | null;
   commandPaletteShortcutLabel: string | null;
   threadJumpLabelByKey: ReadonlyMap<string, string>;
@@ -2637,6 +2679,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     expandedThreadListsByProject,
     activeRouteProjectKey,
     routeThreadKey,
+    notebookShortcutLabel,
     newThreadShortcutLabel,
     commandPaletteShortcutLabel,
     threadJumpLabelByKey,
@@ -2781,6 +2824,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                         activeRouteThreadKey={
                           activeRouteProjectKey === project.projectKey ? routeThreadKey : null
                         }
+                        notebookShortcutLabel={notebookShortcutLabel}
                         newThreadShortcutLabel={newThreadShortcutLabel}
                         handleNewThread={handleNewThread}
                         archiveThread={archiveThread}
@@ -2815,6 +2859,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 activeRouteThreadKey={
                   activeRouteProjectKey === project.projectKey ? routeThreadKey : null
                 }
+                notebookShortcutLabel={notebookShortcutLabel}
                 newThreadShortcutLabel={newThreadShortcutLabel}
                 handleNewThread={handleNewThread}
                 archiveThread={archiveThread}
@@ -3009,6 +3054,11 @@ export default function Sidebar() {
   const newThreadShortcutLabel =
     shortcutLabelForCommand(keybindings, "chat.newLocal", newThreadShortcutLabelOptions) ??
     shortcutLabelForCommand(keybindings, "chat.new", newThreadShortcutLabelOptions);
+  const notebookShortcutLabel = shortcutLabelForCommand(
+    keybindings,
+    "notebook.enter",
+    newThreadShortcutLabelOptions,
+  );
 
   const navigateToThread = useCallback(
     (threadRef: ScopedThreadRef) => {
@@ -3501,6 +3551,7 @@ export default function Sidebar() {
             expandedThreadListsByProject={expandedThreadListsByProject}
             activeRouteProjectKey={activeRouteProjectKey}
             routeThreadKey={routeThreadKey}
+            notebookShortcutLabel={notebookShortcutLabel}
             newThreadShortcutLabel={newThreadShortcutLabel}
             commandPaletteShortcutLabel={commandPaletteShortcutLabel}
             threadJumpLabelByKey={visibleThreadJumpLabelByKey}
