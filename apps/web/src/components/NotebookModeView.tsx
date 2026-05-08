@@ -186,7 +186,7 @@ function formatNotebookTime(value: string): string {
 function highlightChunkText(text: string, terms: readonly string[]) {
   if (terms.length === 0) return text;
   const escapedTerms = terms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  const pattern = new RegExp(`\\b(?:${escapedTerms.join("|")})[\\w-]*`, "gi");
+  const pattern = new RegExp(escapedTerms.join("|"), "gi");
   let highlightIndex = 0;
   const parts: ReactNode[] = [];
   let cursor = 0;

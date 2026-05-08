@@ -110,7 +110,7 @@ describe("prepareNotebookSearchResult", () => {
     expect(result.threads).toHaveLength(1);
     expect(result.threads[0]?.title).toBe("Budget thread");
     expect(result.threads[0]?.chunks).toHaveLength(2);
-    expect(result.threads[0]?.chunks[0]?.matchedTerms).toContain("sourcecharbudget");
+    expect(result.threads[0]?.chunks[0]?.matchedTerms).toContain("sourceCharBudget");
     expect(result.threads[0]?.chunks[0]?.text).toContain("sourceCharBudget");
     expect(result.threads[0]?.chunks[0]?.messages[0]?.role).toBe("user");
     expect(result.threads[0]?.chunks[0]?.messages).toHaveLength(1);
@@ -139,15 +139,46 @@ describe("prepareNotebookSearchResult", () => {
     expect(result.threads).toEqual([]);
   });
 
-  it("matches query terms as token prefixes", () => {
+  it("matches common words without stop-word filtering", () => {
     const result = prepareNotebookSearchResult(
-      [thread([message(1, "user", "The tests and testing setup both passed.")])],
-      "test",
+      [thread([message(1, "user", "The implementation notes are ready.")])],
+      "the",
     );
 
     expect(result.threads).toHaveLength(1);
-    expect(result.threads[0]?.chunks[0]?.matchedTerms).toEqual(["test"]);
-    expect(result.threads[0]?.chunks[0]?.messages[0]?.matchedTerms).toEqual(["test"]);
+    expect(result.threads[0]?.chunks[0]?.matchedTerms).toEqual(["the"]);
+    expect(result.threads[0]?.chunks[0]?.messages[0]?.matchedTerms).toEqual(["the"]);
+  });
+
+  it("matches continuous phrases instead of separate query words", () => {
+    const result = prepareNotebookSearchResult(
+      [
+        thread([
+          message(1, "user", "Please make the smallest working implementation today."),
+          message(
+            2,
+            "assistant",
+            "We can make it smaller, but the implementation is already working.",
+          ),
+        ]),
+      ],
+      "make the smallest working implementation",
+    );
+
+    expect(result.queryTerms).toEqual(["make the smallest working implementation"]);
+    expect(result.threads).toHaveLength(1);
+    expect(result.threads[0]?.chunks).toHaveLength(1);
+    expect(result.threads[0]?.chunks[0]?.messages[0]?.ordinal).toBe(1);
+  });
+
+  it("matches case-insensitive continuous substrings", () => {
+    const result = prepareNotebookSearchResult(
+      [thread([message(1, "user", "Ship the smallest working implementation today.")])],
+      "SMALLEST WORKING IMPLEM",
+    );
+
+    expect(result.threads).toHaveLength(1);
+    expect(result.threads[0]?.chunks[0]?.matchedTerms).toEqual(["SMALLEST WORKING IMPLEM"]);
   });
 
   it("scans every selected message without capping per-thread matches", () => {

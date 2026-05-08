@@ -9,7 +9,7 @@ Prototype scope:
 - Start with zero selected threads.
 - Let the user select multiple threads from the current project as sources.
 - Lazy-load selected thread details and include only non-streaming user/assistant messages.
-- Search submits run asynchronously and locally over the complete selected user/assistant message corpus, grouped by thread, with highlighted query terms, no model call, and a stoppable in-flight state.
+- Search submits run asynchronously and locally over the complete selected user/assistant message corpus, grouped by thread, with highlighted literal query text, no stop-word filtering, no model call, and a stoppable in-flight state.
 - Ask submits use complete selected user/assistant messages only; remove the retrieved-source fallback/branch entirely.
 - Submitting in either mode clears previous Search and Ask results.
 - Keep the existing model picker/provider selection.

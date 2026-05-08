@@ -2,53 +2,6 @@ import type { Thread } from "./types";
 
 const TOKEN_ESTIMATE_CHARS = 4;
 
-const STOP_WORDS = new Set([
-  "about",
-  "after",
-  "again",
-  "also",
-  "and",
-  "any",
-  "are",
-  "because",
-  "been",
-  "but",
-  "can",
-  "did",
-  "does",
-  "for",
-  "from",
-  "had",
-  "has",
-  "have",
-  "how",
-  "into",
-  "its",
-  "just",
-  "like",
-  "not",
-  "now",
-  "our",
-  "out",
-  "over",
-  "should",
-  "that",
-  "the",
-  "then",
-  "there",
-  "this",
-  "was",
-  "what",
-  "when",
-  "where",
-  "which",
-  "why",
-  "will",
-  "with",
-  "would",
-  "you",
-]);
-
 export interface PreparedNotebookSource {
   threadCount: number;
   messageCount: number;
@@ -110,15 +63,6 @@ interface NotebookThreadSource {
   text: string;
 }
 
-function tokenize(text: string): string[] {
-  return (
-    text
-      .toLowerCase()
-      .match(/[a-z0-9][a-z0-9_-]{1,}/g)
-      ?.filter((term) => !STOP_WORDS.has(term)) ?? []
-  );
-}
-
 function approximateTokens(chars: number): number {
   return Math.ceil(chars / TOKEN_ESTIMATE_CHARS);
 }
@@ -177,12 +121,9 @@ function formatCompleteSources(sources: readonly NotebookThreadSource[]): string
   return lines.join("\n").trim();
 }
 
-function hasPrefixMatch(text: string, queryTerm: string): boolean {
-  return tokenize(text).some((term) => term.startsWith(queryTerm));
-}
-
-function matchedTextTerms(text: string, queryTerms: readonly string[]): string[] {
-  return queryTerms.filter((term) => hasPrefixMatch(text, term));
+function matchedTextTerms(text: string, normalizedQuery: string, displayQuery: string): string[] {
+  if (!normalizedQuery) return [];
+  return text.toLowerCase().includes(normalizedQuery) ? [displayQuery] : [];
 }
 
 export function prepareNotebookSources(
@@ -210,14 +151,16 @@ export function prepareNotebookSearchResult(
   const sources = makeThreadSources(threads);
   const sourceChars = sources.reduce((total, source) => total + source.text.length, 0);
   const messageCount = sources.reduce((total, source) => total + source.messages.length, 0);
-  const queryTerms = [...new Set(tokenize(query))];
+  const displayQuery = query.trim();
+  const normalizedQuery = displayQuery.toLowerCase();
+  const queryTerms = displayQuery ? [displayQuery] : [];
 
   // The UI renders one fold per thread, but only threads with matching chunks
   // are returned. This keeps empty searches explicit at the top level.
   const resultThreads = sources.flatMap((source) => {
     const messagesByOrdinal = new Map(source.messages.map((message) => [message.ordinal, message]));
     const matchingOrdinals = source.messages
-      .filter((message) => matchedTextTerms(message.text, queryTerms).length > 0)
+      .filter((message) => matchedTextTerms(message.text, normalizedQuery, displayQuery).length > 0)
       .map((message) => message.ordinal);
     if (matchingOrdinals.length === 0) return [];
 
@@ -233,14 +176,14 @@ export function prepareNotebookSearchResult(
           text: message.text,
           createdAt: message.createdAt,
           ordinal: message.ordinal,
-          matchedTerms: matchedTextTerms(message.text, queryTerms),
+          matchedTerms: matchedTextTerms(message.text, normalizedQuery, displayQuery),
         })),
         chunks: [...matchingOrdinals]
           .toSorted((a, b) => a - b)
           .flatMap((ordinal) => {
             const message = messagesByOrdinal.get(ordinal);
             if (!message) return [];
-            const matchedTerms = matchedTextTerms(message.text, queryTerms);
+            const matchedTerms = matchedTextTerms(message.text, normalizedQuery, displayQuery);
             return [
               {
                 id: `${source.thread.id}:${message.ordinal}`,
