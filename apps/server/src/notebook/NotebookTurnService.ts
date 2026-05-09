@@ -8,6 +8,19 @@ import * as Stream from "effect/Stream";
 
 import type { ProviderServiceShape } from "../provider/Services/ProviderService.ts";
 
+function errorMessage(cause: unknown): string {
+  if (cause instanceof Error && cause.message.trim().length > 0) {
+    return cause.message;
+  }
+  if (typeof cause === "object" && cause !== null && "message" in cause) {
+    const message = (cause as { readonly message?: unknown }).message;
+    if (typeof message === "string" && message.trim().length > 0) {
+      return message;
+    }
+  }
+  return "Unknown notebook turn failure.";
+}
+
 export function runNotebookTurnStream(
   providerService: ProviderServiceShape,
   input: OrchestrationNotebookTurnInput,
@@ -17,7 +30,7 @@ export function runNotebookTurnStream(
 > {
   const toNotebookTurnError = (cause: unknown) =>
     new OrchestrationDispatchCommandError({
-      message: "Failed to run notebook turn",
+      message: `Failed to run notebook turn: ${errorMessage(cause)}`,
       cause,
     });
 

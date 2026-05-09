@@ -26,10 +26,13 @@ const NotebookProviderSendTurnInput = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   interactionMode: Schema.optional(ProviderInteractionMode),
 });
+const decodeNotebookProviderSendTurnInputSchema = Schema.decodeUnknownEffect(
+  NotebookProviderSendTurnInput,
+);
 
 export const decodeNotebookProviderSendTurnInput = Effect.fn("decodeNotebookProviderSendTurnInput")(
   function* (rawInput: unknown, operation: string) {
-    const parsed = yield* Schema.decodeUnknownEffect(NotebookProviderSendTurnInput)(rawInput).pipe(
+    const parsed = yield* decodeNotebookProviderSendTurnInputSchema(rawInput).pipe(
       Effect.mapError(
         (cause) =>
           new ProviderValidationError({
