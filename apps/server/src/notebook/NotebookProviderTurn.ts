@@ -10,7 +10,8 @@ import {
   type ModelSelection as ModelSelectionType,
 } from "@t3tools/contracts";
 import { getNotebookPromptCharLimit } from "@t3tools/shared/notebook";
-import { Effect, Schema } from "effect";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import { ProviderValidationError } from "../provider/Errors.ts";
 
