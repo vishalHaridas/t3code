@@ -65,7 +65,7 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.appRoot, "/repo");
       assert.equal(environment.backendEntryPath, "/repo/apps/server/dist/bin.mjs");
       assert.equal(environment.backendCwd, "/repo");
-      assert.equal(environment.appUserModelId, "com.vishalharidas.t3codefork.dev");
+      assert.equal(environment.appUserModelId, "com.vishalharidas.v2code.dev");
       assert.equal(environment.linuxWmClass, "t3code-fork-dev");
       assert.deepEqual(
         Option.map(environment.devServerUrl, (url) => url.href),

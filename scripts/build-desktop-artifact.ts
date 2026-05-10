@@ -5,7 +5,7 @@ import desktopPackageJson from "../apps/desktop/package.json" with { type: "json
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
 import { FORK_DESKTOP_IDENTITY } from "@t3tools/shared/desktopForkIdentity";
 
-import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
+import { BRAND_ASSET_PATHS, resolveWebIconOverrides } from "./lib/brand-assets.ts";
 import { getDefaultBuildArch } from "./lib/build-target-arch.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 
@@ -448,6 +448,25 @@ function stageWindowsIcons(stageResourcesDir: string, sourceIco: string) {
   });
 }
 
+function stageWebIcons(repoRoot: string, clientDir: string) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+
+    yield* Effect.forEach(
+      resolveWebIconOverrides("v2", clientDir),
+      (override) =>
+        fs.copyFile(
+          path.join(repoRoot, override.sourceRelativePath),
+          path.isAbsolute(override.targetRelativePath)
+            ? override.targetRelativePath
+            : path.join(repoRoot, override.targetRelativePath),
+        ),
+      { concurrency: "unbounded" },
+    );
+  });
+}
+
 function validateBundledClientAssets(clientDir: string) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -543,9 +562,9 @@ export function resolveDesktopBuildIconAssets(version: string): DesktopBuildIcon
   }
 
   return {
-    macIconPng: BRAND_ASSET_PATHS.productionMacIconPng,
-    linuxIconPng: BRAND_ASSET_PATHS.productionLinuxIconPng,
-    windowsIconIco: BRAND_ASSET_PATHS.productionWindowsIconIco,
+    macIconPng: BRAND_ASSET_PATHS.v2MacIconPng,
+    linuxIconPng: BRAND_ASSET_PATHS.v2LinuxIconPng,
+    windowsIconIco: BRAND_ASSET_PATHS.v2WindowsIconIco,
   };
 }
 
@@ -763,6 +782,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* fs.copy(distDirs.desktopDist, path.join(stageAppDir, "apps/desktop/dist-electron"));
   yield* fs.copy(distDirs.desktopResources, stageResourcesDir);
   yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
+  yield* stageWebIcons(repoRoot, path.join(stageAppDir, "apps/server/dist/client"));
 
   yield* assertPlatformBuildResources(
     options.platform,

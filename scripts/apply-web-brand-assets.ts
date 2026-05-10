@@ -18,6 +18,7 @@ const WEB_ASSET_BRANDS = [
   "development",
   "nightly",
   "production",
+  "v2",
 ] as const satisfies ReadonlyArray<WebAssetBrand>;
 
 export const applyWebBrandAssets = Effect.fn("applyWebBrandAssets")(function* (

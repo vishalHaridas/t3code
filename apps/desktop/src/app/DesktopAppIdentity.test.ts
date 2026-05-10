@@ -118,7 +118,7 @@ const withIdentity = <A, E, R>(
         Layer.provideMerge(
           FileSystem.layerNoop({
             exists: (path) =>
-              Effect.succeed(input.legacyPathExists === true && path.includes("T3 Code Fork")),
+              Effect.succeed(input.legacyPathExists === true && path.includes("V2 Code")),
             readFileString: () =>
               Effect.succeed(input.packageJson ?? '{"t3codeCommitHash":"abcdef1234567890"}'),
           }),
@@ -138,7 +138,7 @@ describe("DesktopAppIdentity", () => {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
         const userDataPath = yield* identity.resolveUserDataPath;
 
-        assert.equal(userDataPath, "/Users/alice/Library/Application Support/T3 Code Fork");
+        assert.equal(userDataPath, "/Users/alice/Library/Application Support/V2 Code");
       }),
       { legacyPathExists: true },
     ),
@@ -156,8 +156,8 @@ describe("DesktopAppIdentity", () => {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
         yield* identity.configure;
 
-        assert.deepEqual(calls.setName, ["T3 Code Fork"]);
-        assert.equal(calls.setAboutPanelOptions[0]?.applicationName, "T3 Code Fork");
+        assert.deepEqual(calls.setName, ["V2 Code"]);
+        assert.equal(calls.setAboutPanelOptions[0]?.applicationName, "V2 Code");
         assert.equal(calls.setAboutPanelOptions[0]?.applicationVersion, "1.2.3");
         assert.equal(calls.setAboutPanelOptions[0]?.version, "0123456789ab");
         assert.deepEqual(calls.setDockIcon, ["/icon.png"]);

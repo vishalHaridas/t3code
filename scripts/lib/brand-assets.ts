@@ -7,6 +7,14 @@ export const BRAND_ASSET_PATHS = {
   productionWebFavicon32Png: "assets/prod/t3-black-web-favicon-32x32.png",
   productionWebAppleTouchIconPng: "assets/prod/t3-black-web-apple-touch-180.png",
 
+  v2MacIconPng: "assets/v2/v2-macos-1024.png",
+  v2LinuxIconPng: "assets/v2/v2-universal-1024.png",
+  v2WindowsIconIco: "assets/v2/v2-windows.ico",
+  v2WebFaviconIco: "assets/v2/v2-web-favicon.ico",
+  v2WebFavicon16Png: "assets/v2/v2-web-favicon-16x16.png",
+  v2WebFavicon32Png: "assets/v2/v2-web-favicon-32x32.png",
+  v2WebAppleTouchIconPng: "assets/v2/v2-web-apple-touch-180.png",
+
   nightlyMacIconPng: "assets/nightly/blueprint-macos-1024.png",
   nightlyLinuxIconPng: "assets/nightly/blueprint-universal-1024.png",
   nightlyWindowsIconIco: "assets/nightly/blueprint-windows.ico",
@@ -23,7 +31,7 @@ export const BRAND_ASSET_PATHS = {
   developmentWebAppleTouchIconPng: "assets/dev/blueprint-web-apple-touch-180.png",
 } as const;
 
-export type WebAssetBrand = "development" | "nightly" | "production";
+export type WebAssetBrand = "development" | "nightly" | "production" | "v2";
 
 export const WEB_ASSET_CHANNELS = ["latest", "nightly"] as const;
 
@@ -63,6 +71,12 @@ const WEB_ICON_SOURCE_PATHS_BY_BRAND = {
     favicon16Png: BRAND_ASSET_PATHS.productionWebFavicon16Png,
     favicon32Png: BRAND_ASSET_PATHS.productionWebFavicon32Png,
     appleTouchIconPng: BRAND_ASSET_PATHS.productionWebAppleTouchIconPng,
+  },
+  v2: {
+    faviconIco: BRAND_ASSET_PATHS.v2WebFaviconIco,
+    favicon16Png: BRAND_ASSET_PATHS.v2WebFavicon16Png,
+    favicon32Png: BRAND_ASSET_PATHS.v2WebFavicon32Png,
+    appleTouchIconPng: BRAND_ASSET_PATHS.v2WebAppleTouchIconPng,
   },
 } as const satisfies Record<WebAssetBrand, Record<keyof typeof WEB_ICON_TARGET_FILENAMES, string>>;
 
