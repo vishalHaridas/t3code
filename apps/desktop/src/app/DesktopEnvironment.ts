@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import { FORK_DESKTOP_IDENTITY } from "@t3tools/shared/desktopForkIdentity";
 
 import {
   type DesktopSettings,
@@ -80,8 +81,6 @@ export class DesktopEnvironment extends Context.Service<
   DesktopEnvironmentShape
 >()("t3/desktop/Environment") {}
 
-const APP_BASE_NAME = "T3 Code";
-
 function resolveDesktopAppStageLabel(input: {
   readonly isDevelopment: boolean;
   readonly appVersion: string;
@@ -98,10 +97,15 @@ function resolveDesktopAppBranding(input: {
   readonly appVersion: string;
 }): DesktopAppBranding {
   const stageLabel = resolveDesktopAppStageLabel(input);
+  const displayName = input.isDevelopment
+    ? FORK_DESKTOP_IDENTITY.devDisplayName
+    : isNightlyDesktopVersion(input.appVersion)
+      ? FORK_DESKTOP_IDENTITY.nightlyDisplayName
+      : FORK_DESKTOP_IDENTITY.stableDisplayName;
   return {
-    baseName: APP_BASE_NAME,
+    baseName: FORK_DESKTOP_IDENTITY.baseName,
     stageLabel,
-    displayName: `${APP_BASE_NAME} (${stageLabel})`,
+    displayName,
   };
 }
 
@@ -151,7 +155,9 @@ const makeDesktopEnvironment = Effect.fn("desktop.environment.make")(function* (
       : input.platform === "darwin"
         ? path.join(homeDirectory, "Library", "Application Support")
         : Option.getOrElse(config.xdgConfigHome, () => path.join(homeDirectory, ".config"));
-  const baseDir = Option.getOrElse(config.t3Home, () => path.join(homeDirectory, ".t3"));
+  const baseDir = Option.getOrElse(config.t3Home, () =>
+    path.join(homeDirectory, ".t3", FORK_DESKTOP_IDENTITY.t3HomeDirName),
+  );
   const rootDir = path.resolve(input.dirname, "../../..");
   const appRoot = input.isPackaged ? input.appPath : rootDir;
   const branding = resolveDesktopAppBranding({
@@ -159,9 +165,16 @@ const makeDesktopEnvironment = Effect.fn("desktop.environment.make")(function* (
     appVersion: input.appVersion,
   });
   const displayName = branding.displayName;
-  const stateDir = path.join(baseDir, isDevelopment ? "dev" : "userdata");
-  const userDataDirName = isDevelopment ? "t3code-dev" : "t3code";
-  const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+  const stateDir = path.join(
+    baseDir,
+    isDevelopment ? FORK_DESKTOP_IDENTITY.devStateDirName : FORK_DESKTOP_IDENTITY.stateDirName,
+  );
+  const userDataDirName = isDevelopment
+    ? FORK_DESKTOP_IDENTITY.devUserDataDirName
+    : FORK_DESKTOP_IDENTITY.userDataDirName;
+  const legacyUserDataDirName = isDevelopment
+    ? FORK_DESKTOP_IDENTITY.devLegacyUserDataDirName
+    : FORK_DESKTOP_IDENTITY.legacyUserDataDirName;
   const resourcesPath = input.resourcesPath;
 
   return DesktopEnvironment.of({
@@ -199,9 +212,13 @@ const makeDesktopEnvironment = Effect.fn("desktop.environment.make")(function* (
     otlpExportIntervalMs: config.otlpExportIntervalMs,
     branding,
     displayName,
-    appUserModelId: isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code",
-    linuxDesktopEntryName: isDevelopment ? "t3code-dev.desktop" : "t3code.desktop",
-    linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",
+    appUserModelId: isDevelopment ? FORK_DESKTOP_IDENTITY.devAppId : FORK_DESKTOP_IDENTITY.appId,
+    linuxDesktopEntryName: isDevelopment
+      ? FORK_DESKTOP_IDENTITY.devLinuxDesktopEntryName
+      : FORK_DESKTOP_IDENTITY.linuxDesktopEntryName,
+    linuxWmClass: isDevelopment
+      ? FORK_DESKTOP_IDENTITY.devLinuxWmClass
+      : FORK_DESKTOP_IDENTITY.linuxWmClass,
     userDataDirName,
     legacyUserDataDirName,
     defaultDesktopSettings: resolveDefaultDesktopSettings(input.appVersion),

@@ -65,8 +65,8 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.appRoot, "/repo");
       assert.equal(environment.backendEntryPath, "/repo/apps/server/dist/bin.mjs");
       assert.equal(environment.backendCwd, "/repo");
-      assert.equal(environment.appUserModelId, "com.t3tools.t3code.dev");
-      assert.equal(environment.linuxWmClass, "t3code-dev");
+      assert.equal(environment.appUserModelId, "com.vishalharidas.t3codefork.dev");
+      assert.equal(environment.linuxWmClass, "t3code-fork-dev");
       assert.deepEqual(
         Option.map(environment.devServerUrl, (url) => url.href),
         Option.some("http://localhost:5173/"),
@@ -79,7 +79,7 @@ describe("DesktopEnvironment", () => {
     }),
   );
 
-  it.effect("derives production state paths under userdata", () =>
+  it.effect("derives production state paths under configured fork home", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment(
         {},
@@ -93,6 +93,17 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.logDir, "/tmp/t3/userdata/logs");
       assert.equal(environment.serverSettingsPath, "/tmp/t3/userdata/settings.json");
     }),
+  );
+
+  it.effect(
+    "defaults the fork home under the upstream .t3 directory without sharing userdata",
+    () =>
+      Effect.gen(function* () {
+        const environment = yield* makeEnvironment();
+
+        assert.equal(environment.baseDir, "/Users/alice/.t3/fork");
+        assert.equal(environment.stateDir, "/Users/alice/.t3/fork/userdata");
+      }),
   );
 
   it.effect("resolves picker defaults without nullish sentinels", () =>

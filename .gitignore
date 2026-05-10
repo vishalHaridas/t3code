@@ -13,6 +13,7 @@ build/
 .logs/
 release/
 release-mock/
+release-fork*/
 .t3
 .idea/
 apps/web/.playwright
