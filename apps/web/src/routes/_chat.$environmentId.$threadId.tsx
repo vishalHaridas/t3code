@@ -2,7 +2,7 @@ import { createFileRoute, retainSearchParams, useNavigate } from "@tanstack/reac
 import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
 
 import ChatView from "../components/ChatView";
-import { NotebookModeView } from "../components/NotebookModeView";
+import { NotebookRouteSurface } from "../components/notebook/NotebookRouteSurface";
 import { threadHasStarted } from "../components/ChatView.logic";
 import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
 import {
@@ -24,12 +24,12 @@ import { createThreadSelectorByRef } from "../storeSelectors";
 import { resolveThreadRouteRef, buildThreadRouteParams } from "../threadRoutes";
 import { RightPanelSheet } from "../components/RightPanelSheet";
 import { Sidebar, SidebarInset, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
-import { useNotebookModeStore } from "../notebookModeStore";
 
 const DiffPanel = lazy(() => import("../components/DiffPanel"));
 const DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_diff_sidebar_width";
-const DIFF_INLINE_DEFAULT_WIDTH = "clamp(28rem,48vw,44rem)";
-const DIFF_INLINE_SIDEBAR_MIN_WIDTH = 26 * 16;
+const DIFF_INLINE_DEFAULT_WIDTH = "clamp(24rem,34vw,36rem)";
+const DIFF_INLINE_SIDEBAR_MIN_WIDTH = 22 * 16;
+const DIFF_INLINE_SIDEBAR_MAX_WIDTH = 256 * 16;
 const COMPOSER_COMPACT_MIN_LEFT_CONTROLS_WIDTH_PX = 208;
 
 const DiffLoadingFallback = (props: { mode: DiffPanelMode }) => {
@@ -126,6 +126,7 @@ const DiffPanelInlineSidebar = (props: {
         collapsible="offcanvas"
         className="border-l border-border bg-card text-foreground"
         resizable={{
+          maxWidth: DIFF_INLINE_SIDEBAR_MAX_WIDTH,
           minWidth: DIFF_INLINE_SIDEBAR_MIN_WIDTH,
           shouldAcceptWidth: shouldAcceptInlineSidebarWidth,
           storageKey: DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY,
@@ -166,7 +167,6 @@ function ChatThreadRouteView() {
   });
   const routeThreadExists = threadExists || draftThreadExists;
   const serverThreadStarted = threadHasStarted(serverThread);
-  const notebookActiveProjectKey = useNotebookModeStore((state) => state.activeProjectKey);
   const environmentHasAnyThreads = environmentHasServerThreads || environmentHasDraftThreads;
   const diffOpen = search.diff === "1";
   const shouldUseDiffSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
@@ -238,24 +238,23 @@ function ChatThreadRouteView() {
 
   const shouldRenderDiffContent = diffOpen || hasOpenedDiff;
   const notebookProjectId = serverThread?.projectId ?? draftThread?.projectId ?? null;
-  const notebookView =
-    notebookActiveProjectKey !== null && notebookProjectId !== null ? (
-      <NotebookModeView projectId={notebookProjectId} />
-    ) : null;
 
   if (!shouldUseDiffSheet) {
     return (
       <>
-        <SidebarInset className="h-dvh  min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-          {notebookView ?? (
-            <ChatView
-              environmentId={threadRef.environmentId}
-              threadId={threadRef.threadId}
-              onDiffPanelOpen={markDiffOpened}
-              reserveTitleBarControlInset={!diffOpen}
-              routeKind="server"
-            />
-          )}
+        <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
+          <NotebookRouteSurface
+            projectId={notebookProjectId}
+            fallback={
+              <ChatView
+                environmentId={threadRef.environmentId}
+                threadId={threadRef.threadId}
+                onDiffPanelOpen={markDiffOpened}
+                reserveTitleBarControlInset={!diffOpen}
+                routeKind="server"
+              />
+            }
+          />
         </SidebarInset>
         <DiffPanelInlineSidebar
           diffOpen={diffOpen}
@@ -269,15 +268,18 @@ function ChatThreadRouteView() {
 
   return (
     <>
-      <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-        {notebookView ?? (
-          <ChatView
-            environmentId={threadRef.environmentId}
-            threadId={threadRef.threadId}
-            onDiffPanelOpen={markDiffOpened}
-            routeKind="server"
-          />
-        )}
+      <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
+        <NotebookRouteSurface
+          projectId={notebookProjectId}
+          fallback={
+            <ChatView
+              environmentId={threadRef.environmentId}
+              threadId={threadRef.threadId}
+              onDiffPanelOpen={markDiffOpened}
+              routeKind="server"
+            />
+          }
+        />
       </SidebarInset>
       <RightPanelSheet open={diffOpen} onClose={closeDiff}>
         {shouldRenderDiffContent ? <LazyDiffPanel mode="sheet" /> : null}

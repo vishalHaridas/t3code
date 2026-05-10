@@ -4,7 +4,10 @@ import {
   type OrchestrationGetFullThreadDiffResult,
   type OrchestrationGetTurnDiffResult as OrchestrationGetTurnDiffResultType,
 } from "@t3tools/contracts";
-import { Effect, Layer, Option, Schema } from "effect";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { CheckpointInvariantError, CheckpointUnavailableError } from "../Errors.ts";
@@ -24,6 +27,7 @@ const make = Effect.gen(function* () {
   const getTurnDiff: CheckpointDiffQueryShape["getTurnDiff"] = Effect.fn("getTurnDiff")(
     function* (input) {
       const operation = "CheckpointDiffQuery.getTurnDiff";
+      const ignoreWhitespace = input.ignoreWhitespace ?? true;
 
       if (input.fromTurnCount === input.toTurnCount) {
         const emptyDiff: OrchestrationGetTurnDiffResultType = {
@@ -131,6 +135,7 @@ const make = Effect.gen(function* () {
         fromCheckpointRef,
         toCheckpointRef,
         fallbackFromToHead: false,
+        ignoreWhitespace,
       });
 
       const turnDiff: OrchestrationGetTurnDiffResultType = {
@@ -157,6 +162,7 @@ const make = Effect.gen(function* () {
       threadId: input.threadId,
       fromTurnCount: 0,
       toTurnCount: input.toTurnCount,
+      ignoreWhitespace: input.ignoreWhitespace ?? true,
     }).pipe(Effect.map((result): OrchestrationGetFullThreadDiffResult => result));
 
   return {

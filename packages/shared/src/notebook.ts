@@ -2,6 +2,7 @@ import {
   NOTEBOOK_SEND_TURN_MAX_INPUT_CHARS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type ModelSelection,
+  ProviderDriverKind,
 } from "@t3tools/contracts";
 
 import { getModelSelectionStringOptionValue, normalizeModelSlug } from "./model.ts";
@@ -53,10 +54,11 @@ export function getNotebookPromptCharLimit(
 ): number {
   if (!modelSelection) return NOTEBOOK_DEFAULT_PROMPT_CHAR_LIMIT;
 
-  const normalizedModel = normalizeModelSlug(modelSelection.model, modelSelection.provider);
+  const provider = ProviderDriverKind.make(modelSelection.instanceId);
+  const normalizedModel = normalizeModelSlug(modelSelection.model, provider);
   const contextWindow = getModelSelectionStringOptionValue(modelSelection, "contextWindow");
 
-  switch (modelSelection.provider) {
+  switch (provider) {
     case "codex": {
       const exactModelLimit = normalizedModel
         ? NOTEBOOK_PROMPT_CHAR_LIMITS.codex.models[

@@ -1,4 +1,10 @@
-import type { ModelSelection, ProjectId, ProviderKind, ServerProvider } from "@t3tools/contracts";
+import type {
+  ModelSelection,
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ServerProvider,
+} from "@t3tools/contracts";
 import { ThreadId as ThreadIdSchema } from "@t3tools/contracts";
 import { parseScopedThreadKey, scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -43,6 +49,8 @@ import NotebookSearchWorker from "../notebookSearch.worker?worker";
 import type { NotebookSearchWorkerResponse } from "../notebookSearch.worker";
 import { formatContextWindowTokens } from "../lib/contextWindow";
 import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
+import { getCustomModelOptionsByInstance } from "../modelSelection";
+import { deriveProviderInstanceEntries } from "../providerInstances";
 import { useServerConfig, useServerKeybindings } from "../rpc/serverState";
 import {
   selectProjectByRef,
@@ -163,15 +171,6 @@ function buildNotebookPrompt(input: { preparedSource: string; question: string }
   ]
     .filter(Boolean)
     .join("\n\n");
-}
-
-function modelOptionsByProvider(providers: readonly ServerProvider[]) {
-  return {
-    codex: providers.find((provider) => provider.provider === "codex")?.models ?? [],
-    claudeAgent: providers.find((provider) => provider.provider === "claudeAgent")?.models ?? [],
-    cursor: providers.find((provider) => provider.provider === "cursor")?.models ?? [],
-    opencode: providers.find((provider) => provider.provider === "opencode")?.models ?? [],
-  } satisfies Record<ProviderKind, ReadonlyArray<ServerProvider["models"][number]>>;
 }
 
 function formatNotebookTime(value: string): string {
@@ -462,7 +461,14 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
   const keybindings = useServerKeybindings();
   const serverConfig = useServerConfig();
   const providers = serverConfig?.providers ?? EMPTY_PROVIDERS;
-  const providerModels = useMemo(() => modelOptionsByProvider(providers), [providers]);
+  const providerInstanceEntries = useMemo(
+    () => deriveProviderInstanceEntries(providers),
+    [providers],
+  );
+  const providerModels = useMemo(
+    () => getCustomModelOptionsByInstance(settings, providers),
+    [providers, settings],
+  );
   const allProjectThreadKeys = useStore(
     useShallow(
       useMemo(
@@ -521,30 +527,38 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
       ),
     ),
   );
-  const selectedProvider: ProviderKind =
+  const draftActiveInstanceId =
     useComposerDraftStore((state) => {
       const draft = activeProjectKey
         ? state.getComposerDraft(DraftId.make(`notebook:${activeProjectKey}`))
         : null;
       return draft?.activeProvider ?? null;
-    }) ??
-    selectedThreads[0]?.modelSelection.provider ??
-    project?.defaultModelSelection?.provider ??
-    "codex";
+    }) ?? null;
+  const selectedInstanceId: ProviderInstanceId =
+    draftActiveInstanceId ??
+    selectedThreads[0]?.modelSelection.instanceId ??
+    project?.defaultModelSelection?.instanceId ??
+    providerInstanceEntries.find((entry) => entry.enabled && entry.isAvailable)?.instanceId ??
+    providerInstanceEntries[0]?.instanceId ??
+    ("codex" as ProviderInstanceId);
+  const selectedProvider: ProviderDriverKind =
+    providerInstanceEntries.find((entry) => entry.instanceId === selectedInstanceId)?.driverKind ??
+    ("codex" as ProviderDriverKind);
   const draftId = DraftId.make(`notebook:${activeProjectKey ?? "inactive"}`);
   const effectiveModelState = useEffectiveComposerModelState({
     draftId,
     providers,
     selectedProvider,
+    selectedInstanceId,
     threadModelSelection: selectedThreads[0]?.modelSelection,
     projectModelSelection: project?.defaultModelSelection,
     settings,
   });
   const selectedModelSelection = effectiveModelState.selectedModel
     ? createModelSelection(
-        selectedProvider,
+        selectedInstanceId,
         effectiveModelState.selectedModel,
-        effectiveModelState.modelOptions?.[selectedProvider],
+        effectiveModelState.modelOptions?.[selectedInstanceId],
       )
     : (selectedThreads[0]?.modelSelection ?? project?.defaultModelSelection);
   const setModelSelection = useComposerDraftStore((state) => state.setModelSelection);
@@ -870,15 +884,15 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
             {mode === "ask" ? (
               <ProviderModelPicker
                 compact
-                provider={selectedProvider}
+                activeInstanceId={selectedInstanceId}
                 model={effectiveModelState.selectedModel}
                 lockedProvider={null}
-                providers={providers}
+                instanceEntries={providerInstanceEntries}
                 keybindings={keybindings}
-                modelOptionsByProvider={providerModels}
-                onProviderModelChange={(provider, model) => {
+                modelOptionsByInstance={providerModels}
+                onInstanceModelChange={(instanceId, model) => {
                   if (askInFlight) return;
-                  setModelSelection(draftId, createModelSelection(provider, model));
+                  setModelSelection(draftId, createModelSelection(instanceId, model));
                 }}
               />
             ) : null}

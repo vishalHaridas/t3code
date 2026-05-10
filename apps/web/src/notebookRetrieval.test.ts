@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ProviderInstanceId } from "@t3tools/contracts";
 
 import { prepareNotebookSearchResult, prepareNotebookSources } from "./notebookRetrieval";
 import type { ChatMessage, Thread } from "./types";
@@ -25,7 +26,10 @@ function thread(messages: ChatMessage[], title = "Notebook retrieval"): Thread {
     codexThreadId: null,
     projectId: "project-1" as Thread["projectId"],
     title,
-    modelSelection: { provider: "codex", model: "gpt-5.4-mini" } as Thread["modelSelection"],
+    modelSelection: {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.4-mini",
+    },
     runtimeMode: "full-access",
     interactionMode: "default",
     session: null,
