@@ -1,21 +1,19 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo } from "react";
 import ChatView from "../components/ChatView";
-import { NotebookModeView } from "../components/NotebookModeView";
+import { NotebookRouteSurface } from "../components/notebook/NotebookRouteSurface";
 import { threadHasStarted } from "../components/ChatView.logic";
 import { useComposerDraftStore, DraftId } from "../composerDraftStore";
 import { SidebarInset } from "../components/ui/sidebar";
 import { createThreadSelectorAcrossEnvironments } from "../storeSelectors";
 import { useStore } from "../store";
 import { buildThreadRouteParams } from "../threadRoutes";
-import { useNotebookModeStore } from "../notebookModeStore";
 
 function DraftChatThreadRouteView() {
   const navigate = useNavigate();
   const { draftId: rawDraftId } = Route.useParams();
   const draftId = DraftId.make(rawDraftId);
   const draftSession = useComposerDraftStore((store) => store.getDraftSession(draftId));
-  const notebookActiveProjectKey = useNotebookModeStore((state) => state.activeProjectKey);
   const serverThread = useStore(
     useMemo(
       () => createThreadSelectorAcrossEnvironments(draftSession?.threadId ?? null),
@@ -58,7 +56,7 @@ function DraftChatThreadRouteView() {
 
   if (canonicalThreadRef) {
     return (
-      <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
+      <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
         <ChatView
           environmentId={canonicalThreadRef.environmentId}
           threadId={canonicalThreadRef.threadId}
@@ -73,17 +71,18 @@ function DraftChatThreadRouteView() {
   }
 
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-      {notebookActiveProjectKey !== null ? (
-        <NotebookModeView projectId={draftSession.projectId} />
-      ) : (
-        <ChatView
-          draftId={draftId}
-          environmentId={draftSession.environmentId}
-          threadId={draftSession.threadId}
-          routeKind="draft"
-        />
-      )}
+    <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
+      <NotebookRouteSurface
+        projectId={draftSession.projectId}
+        fallback={
+          <ChatView
+            draftId={draftId}
+            environmentId={draftSession.environmentId}
+            threadId={draftSession.threadId}
+            routeKind="draft"
+          />
+        }
+      />
     </SidebarInset>
   );
 }

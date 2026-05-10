@@ -1,5 +1,5 @@
 import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
@@ -7,8 +7,10 @@ import {
   startNewLocalThreadFromContext,
   startNewThreadFromContext,
 } from "../lib/chatThreadActions";
+import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { resolveShortcutCommand } from "../keybindings";
+import { selectProjectByRef, useStore } from "../store";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useNotebookModeStore } from "../notebookModeStore";
@@ -22,12 +24,36 @@ function ChatRouteGlobalShortcuts() {
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef } =
     useHandleNewThread();
   const keybindings = useServerKeybindings();
+  const activeThreadProject = useStore(
+    useMemo(
+      () => (state) =>
+        activeThread
+          ? selectProjectByRef(state, {
+              environmentId: activeThread.environmentId,
+              projectId: activeThread.projectId,
+            })
+          : undefined,
+      [activeThread],
+    ),
+  );
+  const defaultProject = useStore(
+    useMemo(() => (state) => selectProjectByRef(state, defaultProjectRef), [defaultProjectRef]),
+  );
   const terminalOpen = useTerminalStateStore((state) =>
     routeThreadRef
       ? selectThreadTerminalState(state.terminalStateByThreadKey, routeThreadRef).terminalOpen
       : false,
   );
   const appSettings = useSettings();
+  const notebookProjectKey = useMemo(() => {
+    if (activeThreadProject) {
+      return deriveLogicalProjectKeyFromSettings(activeThreadProject, appSettings);
+    }
+    if (activeDraftThread?.logicalProjectKey) {
+      return activeDraftThread.logicalProjectKey;
+    }
+    return defaultProject ? deriveLogicalProjectKeyFromSettings(defaultProject, appSettings) : null;
+  }, [activeDraftThread, activeThreadProject, appSettings, defaultProject]);
 
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
@@ -48,6 +74,17 @@ function ChatRouteGlobalShortcuts() {
       if (event.key === "Escape" && selectedThreadKeysSize > 0) {
         event.preventDefault();
         clearSelection();
+        return;
+      }
+
+      if (command === "notebook.enter") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!notebookProjectKey) return;
+        const notebookStore = useNotebookModeStore.getState();
+        if (notebookStore.activeProjectKey !== notebookProjectKey) {
+          notebookStore.enter(notebookProjectKey);
+        }
         return;
       }
 
@@ -98,6 +135,7 @@ function ChatRouteGlobalShortcuts() {
     handleNewThread,
     keybindings,
     defaultProjectRef,
+    notebookProjectKey,
     selectedThreadKeysSize,
     terminalOpen,
     appSettings.defaultThreadEnvMode,
@@ -117,7 +155,10 @@ function ChatRouteLayout() {
 
 export const Route = createFileRoute("/_chat")({
   beforeLoad: async ({ context }) => {
-    if (context.authGateState.status !== "authenticated") {
+    if (
+      context.authGateState.status !== "authenticated" &&
+      context.authGateState.status !== "hosted-static"
+    ) {
       throw redirect({ to: "/pair", replace: true });
     }
   },

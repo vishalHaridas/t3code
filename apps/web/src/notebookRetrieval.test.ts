@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ProviderInstanceId } from "@t3tools/contracts";
 
 import { prepareNotebookSearchResult, prepareNotebookSources } from "./notebookRetrieval";
 import type { ChatMessage, Thread } from "./types";
@@ -25,7 +26,10 @@ function thread(messages: ChatMessage[], title = "Notebook retrieval"): Thread {
     codexThreadId: null,
     projectId: "project-1" as Thread["projectId"],
     title,
-    modelSelection: { provider: "codex", model: "gpt-5.4-mini" } as Thread["modelSelection"],
+    modelSelection: {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.4-mini",
+    },
     runtimeMode: "full-access",
     interactionMode: "default",
     session: null,
@@ -43,7 +47,7 @@ function thread(messages: ChatMessage[], title = "Notebook retrieval"): Thread {
 }
 
 describe("prepareNotebookSources", () => {
-  it("includes complete selected messages when sources fit the budget", () => {
+  it("includes complete selected messages", () => {
     const prepared = prepareNotebookSources(
       [
         thread([
@@ -56,7 +60,6 @@ describe("prepareNotebookSources", () => {
       "What did we discuss?",
     );
 
-    expect(prepared.mode).toBe("complete");
     expect(prepared.promptSource).toContain("Can we build notebook memory?");
     expect(prepared.promptSource).toContain("selected user and assistant messages");
     expect(prepared.promptSource).not.toContain("hidden");
@@ -65,7 +68,7 @@ describe("prepareNotebookSources", () => {
     expect(prepared.promptSource).not.toContain("M1");
   });
 
-  it("switches to retrieved windows for large sources and keeps future-plan anchors", () => {
+  it("keeps complete selected messages even for large sources", () => {
     const filler = "implementation notes ".repeat(2_400);
     const prepared = prepareNotebookSources(
       [
@@ -79,31 +82,13 @@ describe("prepareNotebookSources", () => {
       "Any things we decided or planned for the future?",
     );
 
-    expect(prepared.mode).toBe("retrieved");
-    expect(prepared.promptSource).toContain("## Planning / Follow-up Anchors");
+    expect(prepared.promptSource).toContain("implementation notes implementation notes");
     expect(prepared.promptSource).toContain("get back to token accounting later");
-    expect(prepared.promptSource).toContain("Retrieved Conversation Windows");
+    expect(prepared.promptSource).toContain("The retrieval system should prefer coherent windows.");
+    expect(prepared.promptSource).not.toContain("Retrieved Conversation Windows");
     expect(prepared.promptSource).not.toContain("Source 1");
     expect(prepared.promptSource).not.toContain("Thread ID:");
     expect(prepared.promptSource).not.toContain("M2");
-  });
-
-  it("uses the caller-provided budget for the complete-source decision", () => {
-    const filler = "implementation notes ".repeat(4_000);
-    const prepared = prepareNotebookSources(
-      [
-        thread([
-          message(1, "user", filler),
-          message(2, "assistant", "This should still fit when the caller has enough room."),
-        ]),
-      ],
-      "What happened?",
-      { sourceCharBudget: 120_000 },
-    );
-
-    expect(prepared.mode).toBe("complete");
-    expect(prepared.sourceCharBudget).toBe(120_000);
-    expect(prepared.promptSource).toContain("This should still fit");
   });
 });
 
@@ -129,7 +114,7 @@ describe("prepareNotebookSearchResult", () => {
     expect(result.threads).toHaveLength(1);
     expect(result.threads[0]?.title).toBe("Budget thread");
     expect(result.threads[0]?.chunks).toHaveLength(2);
-    expect(result.threads[0]?.chunks[0]?.matchedTerms).toContain("sourcecharbudget");
+    expect(result.threads[0]?.chunks[0]?.matchedTerms).toContain("sourceCharBudget");
     expect(result.threads[0]?.chunks[0]?.text).toContain("sourceCharBudget");
     expect(result.threads[0]?.chunks[0]?.messages[0]?.role).toBe("user");
     expect(result.threads[0]?.chunks[0]?.messages).toHaveLength(1);
@@ -158,14 +143,54 @@ describe("prepareNotebookSearchResult", () => {
     expect(result.threads).toEqual([]);
   });
 
-  it("matches query terms as token prefixes", () => {
+  it("matches common words without stop-word filtering", () => {
     const result = prepareNotebookSearchResult(
-      [thread([message(1, "user", "The tests and testing setup both passed.")])],
-      "test",
+      [thread([message(1, "user", "The implementation notes are ready.")])],
+      "the",
     );
 
     expect(result.threads).toHaveLength(1);
-    expect(result.threads[0]?.chunks[0]?.matchedTerms).toEqual(["test"]);
-    expect(result.threads[0]?.chunks[0]?.messages[0]?.matchedTerms).toEqual(["test"]);
+    expect(result.threads[0]?.chunks[0]?.matchedTerms).toEqual(["the"]);
+    expect(result.threads[0]?.chunks[0]?.messages[0]?.matchedTerms).toEqual(["the"]);
+  });
+
+  it("matches continuous phrases instead of separate query words", () => {
+    const result = prepareNotebookSearchResult(
+      [
+        thread([
+          message(1, "user", "Please make the smallest working implementation today."),
+          message(
+            2,
+            "assistant",
+            "We can make it smaller, but the implementation is already working.",
+          ),
+        ]),
+      ],
+      "make the smallest working implementation",
+    );
+
+    expect(result.queryTerms).toEqual(["make the smallest working implementation"]);
+    expect(result.threads).toHaveLength(1);
+    expect(result.threads[0]?.chunks).toHaveLength(1);
+    expect(result.threads[0]?.chunks[0]?.messages[0]?.ordinal).toBe(1);
+  });
+
+  it("matches case-insensitive continuous substrings", () => {
+    const result = prepareNotebookSearchResult(
+      [thread([message(1, "user", "Ship the smallest working implementation today.")])],
+      "SMALLEST WORKING IMPLEM",
+    );
+
+    expect(result.threads).toHaveLength(1);
+    expect(result.threads[0]?.chunks[0]?.matchedTerms).toEqual(["SMALLEST WORKING IMPLEM"]);
+  });
+
+  it("scans every selected message without capping per-thread matches", () => {
+    const result = prepareNotebookSearchResult(
+      [thread(Array.from({ length: 20 }, (_, index) => message(index + 1, "user", "needle")))],
+      "needle",
+    );
+
+    expect(result.threads[0]?.chunks).toHaveLength(20);
   });
 });

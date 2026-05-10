@@ -10,7 +10,8 @@ import {
   type ModelSelection as ModelSelectionType,
 } from "@t3tools/contracts";
 import { getNotebookPromptCharLimit } from "@t3tools/shared/notebook";
-import { Effect, Schema } from "effect";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import { ProviderValidationError } from "../provider/Errors.ts";
 
@@ -25,10 +26,13 @@ const NotebookProviderSendTurnInput = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   interactionMode: Schema.optional(ProviderInteractionMode),
 });
+const decodeNotebookProviderSendTurnInputSchema = Schema.decodeUnknownEffect(
+  NotebookProviderSendTurnInput,
+);
 
 export const decodeNotebookProviderSendTurnInput = Effect.fn("decodeNotebookProviderSendTurnInput")(
   function* (rawInput: unknown, operation: string) {
-    const parsed = yield* Schema.decodeUnknownEffect(NotebookProviderSendTurnInput)(rawInput).pipe(
+    const parsed = yield* decodeNotebookProviderSendTurnInputSchema(rawInput).pipe(
       Effect.mapError(
         (cause) =>
           new ProviderValidationError({
