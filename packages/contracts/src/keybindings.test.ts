@@ -1,6 +1,6 @@
-import { Schema } from "effect";
 import { assert, it } from "@effect/vitest";
-import { Effect } from "effect";
+import * as Schema from "effect/Schema";
+import * as Effect from "effect/Effect";
 
 import {
   KeybindingsConfig,
@@ -46,6 +46,12 @@ it.effect("parses keybinding rules", () =>
       command: "commandPalette.toggle",
     });
     assert.strictEqual(parsedCommandPalette.command, "commandPalette.toggle");
+
+    const parsedNotebookEnter = yield* decode(KeybindingRule, {
+      key: "ctrl+shift+f",
+      command: "notebook.enter",
+    });
+    assert.strictEqual(parsedNotebookEnter.command, "notebook.enter");
 
     const parsedLocal = yield* decode(KeybindingRule, {
       key: "mod+shift+n",
