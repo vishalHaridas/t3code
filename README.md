@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>t3code</h1>
+  <h1>V2 Code</h1>
 
   <p>
     <a href="./LICENSE"><img alt="license MIT" src="https://img.shields.io/badge/license-MIT-111111?labelColor=666666"></a>
