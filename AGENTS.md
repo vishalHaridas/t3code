@@ -1,5 +1,9 @@
 # AGENTS.md
 
+## Fork Overlay
+
+Also read `AGENTS.fork.md` for instructions that apply only to this fork of the project.
+
 ## Task Completion Requirements
 
 - All of `bun fmt`, `bun lint`, and `bun typecheck` must pass before considering tasks completed.
