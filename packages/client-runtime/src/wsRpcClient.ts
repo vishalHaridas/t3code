@@ -357,16 +357,32 @@ export function createWsRpcClient(
         transport.request((client) => client[ORCHESTRATION_WS_METHODS.getTurnDiff](input)),
       getFullThreadDiff: (input) =>
         transport.request((client) => client[ORCHESTRATION_WS_METHODS.getFullThreadDiff](input)),
-      notebookTurn: (input, listener, options) =>
-        transport.subscribe(
-          (client) => client[ORCHESTRATION_WS_METHODS.notebookTurn](input),
-          listener,
-          {
-            ...options,
-            resubscribeOnComplete: false,
-            tag: ORCHESTRATION_WS_METHODS.notebookTurn,
-          },
-        ),
+      notebookTurn: (input, listener, options) => {
+        let active = true;
+        void transport
+          .requestStream(
+            (client) => client[ORCHESTRATION_WS_METHODS.notebookTurn](input),
+            (event) => {
+              if (active) {
+                listener(event);
+              }
+            },
+          )
+          .catch((error: unknown) => {
+            if (!active) {
+              return;
+            }
+            const message =
+              error instanceof Error && error.message.trim().length > 0
+                ? error.message
+                : String(error);
+            options?.onError?.(message);
+          });
+
+        return () => {
+          active = false;
+        };
+      },
       getArchivedShellSnapshot: () =>
         transport.request((client) =>
           client[ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot]({}),

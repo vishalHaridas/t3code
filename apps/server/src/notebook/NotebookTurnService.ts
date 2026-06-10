@@ -4,6 +4,7 @@ import {
   OrchestrationDispatchCommandError,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
 import type { ProviderServiceShape } from "../provider/Services/ProviderService.ts";
@@ -99,10 +100,41 @@ export function runNotebookTurnStream(
         return { type: "done" };
       }),
       Stream.filter((item) => item.type !== "delta" || item.delta.length > 0),
-      Stream.takeUntil((item) => item.type === "done" || item.type === "error"),
     );
 
-    return Stream.merge(Stream.fromEffect(sendTurn).pipe(Stream.drain), runtimeItems).pipe(
+    return Stream.callback<OrchestrationNotebookTurnStreamItem, OrchestrationDispatchCommandError>(
+      (queue) =>
+        Effect.gen(function* () {
+          yield* runtimeItems.pipe(
+            Stream.runForEach((item) =>
+              Queue.offer(queue, item).pipe(
+                Effect.andThen(
+                  item.type === "done" || item.type === "error"
+                    ? Queue.end(queue).pipe(Effect.asVoid)
+                    : Effect.void,
+                ),
+              ),
+            ),
+            Effect.matchCauseEffect({
+              onFailure: (cause) => Queue.failCause(queue, cause),
+              onSuccess: () => Queue.end(queue).pipe(Effect.asVoid),
+            }),
+            Effect.forkScoped,
+          );
+
+          yield* sendTurn.pipe(
+            Effect.matchCauseEffect({
+              onFailure: (cause) =>
+                Queue.offer(queue, {
+                  type: "error",
+                  message: `Failed to run notebook turn: ${errorMessage(cause)}`,
+                }).pipe(Effect.andThen(Queue.end(queue).pipe(Effect.asVoid))),
+              onSuccess: () => Effect.void,
+            }),
+            Effect.forkScoped,
+          );
+        }),
+    ).pipe(
       Stream.ensuring(
         providerService
           .stopSession({ threadId: input.threadId })

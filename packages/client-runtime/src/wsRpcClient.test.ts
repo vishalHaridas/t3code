@@ -3,7 +3,12 @@ import type {
   VcsStatusRemoteResult,
   VcsStatusStreamEvent,
 } from "@t3tools/contracts";
-import { ORCHESTRATION_WS_METHODS, ThreadId, WS_METHODS } from "@t3tools/contracts";
+import {
+  ORCHESTRATION_WS_METHODS,
+  ProviderInstanceId,
+  ThreadId,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 vi.mock("./wsTransport.ts", () => ({
@@ -182,5 +187,41 @@ describe("createWsRpcClient", () => {
       WS_METHODS.subscribeServerConfig,
       ORCHESTRATION_WS_METHODS.subscribeThread,
     ]);
+  });
+
+  it("runs notebook turns as finite request streams", () => {
+    const requestStream = vi.fn(() => Promise.resolve());
+    const subscribe = vi.fn(() => () => undefined);
+    const transport = {
+      dispose: vi.fn(async () => undefined),
+      reconnect: vi.fn(async () => undefined),
+      isHeartbeatFresh: vi.fn(() => true),
+      request: vi.fn(),
+      requestStream,
+      subscribe,
+    } satisfies Pick<
+      WsTransport,
+      "dispose" | "isHeartbeatFresh" | "reconnect" | "request" | "requestStream" | "subscribe"
+    >;
+
+    const client = createWsRpcClient(transport as unknown as WsTransport);
+    const listener = vi.fn();
+
+    const unsubscribe = client.orchestration.notebookTurn(
+      {
+        threadId: ThreadId.make("notebook-1"),
+        cwd: "/repo",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.4-mini",
+        },
+        prompt: "What happened?",
+      },
+      listener,
+    );
+
+    expect(typeof unsubscribe).toBe("function");
+    expect(requestStream).toHaveBeenCalledOnce();
+    expect(subscribe).not.toHaveBeenCalled();
   });
 });
