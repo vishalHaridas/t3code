@@ -29,7 +29,7 @@ import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 
-import { cn } from "~/lib/utils";
+import { cn, randomUUID } from "~/lib/utils";
 import {
   useEffectiveComposerModelState,
   useComposerDraftStore,
@@ -639,7 +639,7 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
     const query = question.trim();
     if (!canSubmit || query.length === 0) return;
     terminateSearchWorker();
-    const runId = crypto.randomUUID();
+    const runId = randomUUID();
     const worker = new NotebookSearchWorker();
     searchWorkerRef.current = worker;
     searchRunIdRef.current = runId;
@@ -707,7 +707,7 @@ export function NotebookModeView(props: { projectId: ProjectId }) {
     try {
       streamUnsubscribeRef.current = api.orchestration.notebookTurn(
         {
-          threadId: ThreadIdSchema.make(`notebook-${crypto.randomUUID()}`),
+          threadId: ThreadIdSchema.make(`notebook-${randomUUID()}`),
           cwd: project.cwd,
           modelSelection: selectedModelSelection as ModelSelection,
           prompt,

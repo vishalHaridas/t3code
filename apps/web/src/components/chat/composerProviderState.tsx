@@ -1,5 +1,6 @@
 import {
   type ProviderDriverKind,
+  type ProviderInstanceId,
   type ProviderOptionSelection,
   type ScopedThreadRef,
   type ServerProviderModel,
@@ -35,6 +36,7 @@ export type ComposerProviderState = {
 
 type TraitsRenderInput = {
   provider: ProviderDriverKind;
+  instanceId?: ProviderInstanceId;
   threadRef?: ScopedThreadRef;
   draftId?: DraftId;
   model: string;
@@ -65,7 +67,7 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
     ...(ultrathinkActive
       ? {
           composerFrameClassName: "ultrathink-frame",
-          composerSurfaceClassName: "shadow-[0_0_0_1px_rgba(255,255,255,0.04)_inset]",
+          composerSurfaceClassName: "shadow-[0_0_0_1px_rgba(255,255,255,0.07)_inset]",
           modelPickerIconClassName: "ultrathink-chroma",
         }
       : {}),
@@ -76,8 +78,17 @@ function renderTraitsControl(
   Component: typeof TraitsMenuContent | typeof TraitsPicker,
   input: TraitsRenderInput,
 ): ReactNode {
-  const { provider, threadRef, draftId, model, models, modelOptions, prompt, onPromptChange } =
-    input;
+  const {
+    provider,
+    instanceId,
+    threadRef,
+    draftId,
+    model,
+    models,
+    modelOptions,
+    prompt,
+    onPromptChange,
+  } = input;
   const hasTarget = threadRef !== undefined || draftId !== undefined;
   if (
     !hasTarget ||
@@ -88,6 +99,7 @@ function renderTraitsControl(
   return (
     <Component
       provider={provider}
+      {...(instanceId ? { instanceId } : {})}
       models={models}
       {...(threadRef ? { threadRef } : {})}
       {...(draftId ? { draftId } : {})}

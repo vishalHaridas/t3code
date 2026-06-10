@@ -1,11 +1,12 @@
 import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as Random from "effect/Random";
 
 import { ServerConfig } from "../../config.ts";
+import { layer as ProcessRunnerLive } from "../../processRunner.ts";
 import { ServerEnvironment, type ServerEnvironmentShape } from "../Services/ServerEnvironment.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
@@ -38,6 +39,7 @@ export const makeServerEnvironment = Effect.fn("makeServerEnvironment")(function
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig;
+  const crypto = yield* Crypto.Crypto;
 
   const readPersistedEnvironmentId = Effect.gen(function* () {
     const exists = yield* fileSystem
@@ -63,7 +65,7 @@ export const makeServerEnvironment = Effect.fn("makeServerEnvironment")(function
       return persisted;
     }
 
-    const generated = yield* Random.nextUUIDv4;
+    const generated = yield* crypto.randomUUIDv4;
     yield* persistEnvironmentId(generated);
     return generated;
   });
@@ -93,4 +95,6 @@ export const makeServerEnvironment = Effect.fn("makeServerEnvironment")(function
   } satisfies ServerEnvironmentShape;
 });
 
-export const ServerEnvironmentLive = Layer.effect(ServerEnvironment, makeServerEnvironment());
+export const ServerEnvironmentLive = Layer.effect(ServerEnvironment, makeServerEnvironment()).pipe(
+  Layer.provide(ProcessRunnerLive),
+);

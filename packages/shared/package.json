@@ -1,6 +1,5 @@
 {
   "name": "@t3tools/shared",
-  "version": "0.0.0-alpha.1",
   "private": true,
   "type": "module",
   "exports": {
@@ -11,6 +10,14 @@
     "./notebook": {
       "types": "./src/notebook.ts",
       "import": "./src/notebook.ts"
+    },
+    "./advertisedEndpoint": {
+      "types": "./src/advertisedEndpoint.ts",
+      "import": "./src/advertisedEndpoint.ts"
+    },
+    "./agentAwareness": {
+      "types": "./src/agentAwareness.ts",
+      "import": "./src/agentAwareness.ts"
     },
     "./git": {
       "types": "./src/git.ts",
@@ -27,6 +34,10 @@
     "./observability": {
       "types": "./src/observability.ts",
       "import": "./src/observability.ts"
+    },
+    "./httpObservability": {
+      "types": "./src/httpObservability.ts",
+      "import": "./src/httpObservability.ts"
     },
     "./shell": {
       "types": "./src/shell.ts",
@@ -52,6 +63,10 @@
       "types": "./src/schemaJson.ts",
       "import": "./src/schemaJson.ts"
     },
+    "./schemaYaml": {
+      "types": "./src/schemaYaml.ts",
+      "import": "./src/schemaYaml.ts"
+    },
     "./toolActivity": {
       "types": "./src/toolActivity.ts",
       "import": "./src/toolActivity.ts"
@@ -71,6 +86,42 @@
     "./projectScripts": {
       "types": "./src/projectScripts.ts",
       "import": "./src/projectScripts.ts"
+    },
+    "./orchestrationTiming": {
+      "types": "./src/orchestrationTiming.ts",
+      "import": "./src/orchestrationTiming.ts"
+    },
+    "./remote": {
+      "types": "./src/remote.ts",
+      "import": "./src/remote.ts"
+    },
+    "./relaySigning": {
+      "types": "./src/relaySigning.ts",
+      "import": "./src/relaySigning.ts"
+    },
+    "./dpop": {
+      "types": "./src/dpop.ts",
+      "import": "./src/dpop.ts"
+    },
+    "./dpopCommon": {
+      "types": "./src/dpopCommon.ts",
+      "import": "./src/dpopCommon.ts"
+    },
+    "./relayAuth": {
+      "types": "./src/relayAuth.ts",
+      "import": "./src/relayAuth.ts"
+    },
+    "./relayUrl": {
+      "types": "./src/relayUrl.ts",
+      "import": "./src/relayUrl.ts"
+    },
+    "./relayJwt": {
+      "types": "./src/relayJwt.ts",
+      "import": "./src/relayJwt.ts"
+    },
+    "./oauthScope": {
+      "types": "./src/oauthScope.ts",
+      "import": "./src/oauthScope.ts"
     },
     "./searchRanking": {
       "types": "./src/searchRanking.ts",
@@ -95,22 +146,36 @@
     "./desktopForkIdentity": {
       "types": "./src/desktopForkIdentity.ts",
       "import": "./src/desktopForkIdentity.ts"
+    },
+    "./composerTrigger": {
+      "types": "./src/composerTrigger.ts",
+      "import": "./src/composerTrigger.ts"
+    },
+    "./terminalLabels": {
+      "types": "./src/terminalLabels.ts",
+      "import": "./src/terminalLabels.ts"
+    },
+    "./relayClient": {
+      "types": "./src/relayClient.ts",
+      "import": "./src/relayClient.ts"
     }
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "typecheck": "tsgo --noEmit",
+    "test": "vp test run"
   },
   "dependencies": {
+    "@noble/curves": "catalog:",
+    "@noble/hashes": "catalog:",
     "@t3tools/contracts": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "jose": "catalog:",
+    "yaml": "catalog:"
   },
   "devDependencies": {
-    "@effect/language-service": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
-    "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vite-plus": "catalog:"
   }
 }

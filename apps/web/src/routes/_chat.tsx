@@ -11,7 +11,7 @@ import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { resolveShortcutCommand } from "../keybindings";
 import { selectProjectByRef, useStore } from "../store";
-import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
+import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useNotebookModeStore } from "../notebookModeStore";
 import { resolveSidebarNewThreadEnvMode } from "~/components/Sidebar.logic";
@@ -39,9 +39,9 @@ function ChatRouteGlobalShortcuts() {
   const defaultProject = useStore(
     useMemo(() => (state) => selectProjectByRef(state, defaultProjectRef), [defaultProjectRef]),
   );
-  const terminalOpen = useTerminalStateStore((state) =>
+  const terminalOpen = useTerminalUiStateStore((state) =>
     routeThreadRef
-      ? selectThreadTerminalState(state.terminalStateByThreadKey, routeThreadRef).terminalOpen
+      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
       : false,
   );
   const appSettings = useSettings();
