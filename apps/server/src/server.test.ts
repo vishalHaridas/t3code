@@ -5552,6 +5552,56 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("routes websocket rpc notebook turns with orchestration operate scope", () =>
+    Effect.gen(function* () {
+      const notebookThreadId = ThreadId.make("notebook-auth-scope-test");
+      const sendTurnStarted = yield* Deferred.make<void>();
+
+      yield* buildAppUnderTest({
+        layers: {
+          providerService: {
+            sendTurn: (input) =>
+              Deferred.succeed(sendTurnStarted, undefined).pipe(
+                Effect.as({
+                  threadId: input.threadId,
+                  turnId: TurnId.make("turn-notebook-test"),
+                }),
+              ),
+            streamEvents: Stream.fromEffect(Deferred.await(sendTurnStarted)).pipe(
+              Stream.flatMap(() =>
+                Stream.make({
+                  eventId: EventId.make("event-notebook-done"),
+                  provider: ProviderDriverKind.make("codex"),
+                  providerInstanceId: ProviderInstanceId.make("codex"),
+                  threadId: notebookThreadId,
+                  createdAt: "2026-01-01T00:00:00.000Z",
+                  type: "turn.completed" as const,
+                  payload: {
+                    state: "completed" as const,
+                  },
+                }),
+              ),
+            ),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.notebookTurn]({
+            threadId: notebookThreadId,
+            cwd: "/tmp/project-a",
+            modelSelection: defaultModelSelection,
+            prompt: "Summarize this notebook source.",
+          }).pipe(Stream.runCollect),
+        ),
+      );
+
+      assert.deepEqual(Array.from(result), [{ type: "done" }]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket rpc orchestration shell snapshot errors", () =>
     Effect.gen(function* () {
       const projectionError = new PersistenceSqlError({
