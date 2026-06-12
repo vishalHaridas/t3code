@@ -79,7 +79,7 @@ export interface DesktopEnvironmentShape {
 export class DesktopEnvironment extends Context.Service<
   DesktopEnvironment,
   DesktopEnvironmentShape
->()("t3/desktop/Environment") {}
+>()("@t3tools/desktop/app/DesktopEnvironment") {}
 
 function resolveDesktopAppStageLabel(input: {
   readonly isDevelopment: boolean;
@@ -212,7 +212,9 @@ const makeDesktopEnvironment = Effect.fn("desktop.environment.make")(function* (
     otlpExportIntervalMs: config.otlpExportIntervalMs,
     branding,
     displayName,
-    appUserModelId: isDevelopment ? FORK_DESKTOP_IDENTITY.devAppId : FORK_DESKTOP_IDENTITY.appId,
+    appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
+      isDevelopment ? FORK_DESKTOP_IDENTITY.devAppId : FORK_DESKTOP_IDENTITY.appId,
+    ),
     linuxDesktopEntryName: isDevelopment
       ? FORK_DESKTOP_IDENTITY.devLinuxDesktopEntryName
       : FORK_DESKTOP_IDENTITY.linuxDesktopEntryName,

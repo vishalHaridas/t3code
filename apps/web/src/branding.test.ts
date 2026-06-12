@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 const originalWindow = globalThis.window;
 
@@ -42,6 +42,8 @@ describe("branding", () => {
 
     expect(branding.HOSTED_APP_CHANNEL).toBe("nightly");
     expect(branding.HOSTED_APP_CHANNEL_LABEL).toBe("Nightly");
+    expect(branding.APP_STAGE_LABEL).toBe("Nightly");
+    expect(branding.APP_DISPLAY_NAME).toBe("T3 Code (Nightly)");
   });
 
   it("ignores unknown hosted app channels", async () => {

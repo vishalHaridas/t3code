@@ -165,6 +165,7 @@ export const ServerProvider = Schema.Struct({
   badgeLabel: Schema.optional(TrimmedNonEmptyString),
   continuation: Schema.optional(ServerProviderContinuation),
   showInteractionModeToggle: Schema.optional(Schema.Boolean),
+  requiresNewThreadForModelChange: Schema.optional(Schema.Boolean),
   enabled: Schema.Boolean,
   installed: Schema.Boolean,
   version: Schema.NullOr(TrimmedNonEmptyString),
@@ -327,6 +328,58 @@ export const ServerProcessDiagnosticsResult = Schema.Struct({
   ),
 });
 export type ServerProcessDiagnosticsResult = typeof ServerProcessDiagnosticsResult.Type;
+
+export const ServerProcessResourceHistoryInput = Schema.Struct({
+  windowMs: NonNegativeInt,
+  bucketMs: NonNegativeInt,
+});
+export type ServerProcessResourceHistoryInput = typeof ServerProcessResourceHistoryInput.Type;
+
+export const ServerProcessResourceHistoryBucket = Schema.Struct({
+  startedAt: Schema.DateTimeUtc,
+  endedAt: Schema.DateTimeUtc,
+  avgCpuPercent: Schema.Number,
+  maxCpuPercent: Schema.Number,
+  maxRssBytes: NonNegativeInt,
+  maxProcessCount: NonNegativeInt,
+});
+export type ServerProcessResourceHistoryBucket = typeof ServerProcessResourceHistoryBucket.Type;
+
+export const ServerProcessResourceHistorySummary = Schema.Struct({
+  processKey: TrimmedNonEmptyString,
+  pid: PositiveInt,
+  ppid: NonNegativeInt,
+  command: TrimmedNonEmptyString,
+  depth: NonNegativeInt,
+  isServerRoot: Schema.Boolean,
+  firstSeenAt: Schema.DateTimeUtc,
+  lastSeenAt: Schema.DateTimeUtc,
+  currentCpuPercent: Schema.Number,
+  avgCpuPercent: Schema.Number,
+  maxCpuPercent: Schema.Number,
+  cpuSecondsApprox: Schema.Number,
+  currentRssBytes: NonNegativeInt,
+  maxRssBytes: NonNegativeInt,
+  sampleCount: NonNegativeInt,
+});
+export type ServerProcessResourceHistorySummary = typeof ServerProcessResourceHistorySummary.Type;
+
+export const ServerProcessResourceHistoryResult = Schema.Struct({
+  readAt: Schema.DateTimeUtc,
+  windowMs: NonNegativeInt,
+  bucketMs: NonNegativeInt,
+  sampleIntervalMs: NonNegativeInt,
+  retainedSampleCount: NonNegativeInt,
+  totalCpuSecondsApprox: Schema.Number,
+  buckets: Schema.Array(ServerProcessResourceHistoryBucket),
+  topProcesses: Schema.Array(ServerProcessResourceHistorySummary),
+  error: Schema.Option(
+    Schema.Struct({
+      message: TrimmedNonEmptyString,
+    }),
+  ),
+});
+export type ServerProcessResourceHistoryResult = typeof ServerProcessResourceHistoryResult.Type;
 
 export const ServerSignalProcessInput = Schema.Struct({
   pid: PositiveInt,
@@ -498,7 +551,7 @@ export class ServerProviderUpdateError extends Schema.TaggedErrorClass<ServerPro
   {
     provider: ProviderDriverKind,
     reason: TrimmedNonEmptyString,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {

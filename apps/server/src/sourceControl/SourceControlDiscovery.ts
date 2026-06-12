@@ -64,7 +64,7 @@ export interface SourceControlDiscoveryShape {
 export class SourceControlDiscovery extends Context.Service<
   SourceControlDiscovery,
   SourceControlDiscoveryShape
->()("t3/source-control/SourceControlDiscovery") {}
+>()("t3/sourceControl/SourceControlDiscovery") {}
 
 export const layer = Layer.effect(
   SourceControlDiscovery,
@@ -100,7 +100,7 @@ export const layer = Layer.effect(
           cwd: config.cwd,
           timeoutMs: 5_000,
           maxOutputBytes: 8_000,
-          truncateOutputAtMaxBytes: true,
+          appendTruncationMarker: true,
         })
         .pipe(
           Effect.map(

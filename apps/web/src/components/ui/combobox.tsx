@@ -22,9 +22,9 @@ function Combobox<Value, Multiple extends boolean | undefined = false>(
   const chipsRef = React.useRef<Element | null>(null);
   const value = React.useMemo(() => ({ chipsRef, multiple: !!props.multiple }), [props.multiple]);
   return (
-    <ComboboxContext.Provider value={value}>
+    <ComboboxContext value={value}>
       <ComboboxPrimitive.Root {...props} />
-    </ComboboxContext.Provider>
+    </ComboboxContext>
   );
 }
 
@@ -60,6 +60,7 @@ function ComboboxInput({
   showClear = false,
   startAddon,
   size,
+  unstyled = false,
   ...props
 }: Omit<ComboboxPrimitive.Input.Props, "size"> & {
   inputClassName?: string;
@@ -67,6 +68,7 @@ function ComboboxInput({
   showClear?: boolean;
   startAddon?: React.ReactNode;
   size?: "sm" | "default" | "lg" | number;
+  unstyled?: boolean;
   ref?: React.Ref<HTMLInputElement>;
 }) {
   const sizeValue = (size ?? "default") as "sm" | "default" | "lg" | number;
@@ -97,6 +99,7 @@ function ComboboxInput({
             className={cn("has-disabled:opacity-100", inputClassName)}
             nativeInput
             size={sizeValue}
+            unstyled={unstyled}
           />
         }
         {...props}
@@ -151,7 +154,7 @@ function ComboboxPopup({
   side?: ComboboxPrimitive.Positioner.Props["side"];
   anchor?: ComboboxPrimitive.Positioner.Props["anchor"];
 }) {
-  const { chipsRef } = React.useContext(ComboboxContext);
+  const { chipsRef } = React.use(ComboboxContext);
   const anchor = anchorProp ?? chipsRef;
 
   return (
@@ -208,9 +211,11 @@ function ComboboxItem({
       </ComboboxPrimitive.ItemIndicator>
       <div
         className={cn(
+          "[&_svg:not([class*='text-'])]:text-muted-foreground",
           hideIndicator ? "col-start-1 col-span-full" : "col-start-2",
           contentClassName,
         )}
+        data-slot="combobox-item-content"
       >
         {children}
       </div>
@@ -324,7 +329,7 @@ function ComboboxChips({
 }: ComboboxPrimitive.Chips.Props & {
   startAddon?: React.ReactNode;
 }) {
-  const { chipsRef } = React.useContext(ComboboxContext);
+  const { chipsRef } = React.use(ComboboxContext);
 
   return (
     <ComboboxPrimitive.Chips

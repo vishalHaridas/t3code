@@ -5,6 +5,7 @@ node_modules
 *.log
 *.tsbuildinfo
 apps/*/dist
+infra/*/dist
 .astro
 packages/*/dist
 .env
@@ -25,5 +26,11 @@ __screenshots__/
 .tanstack
 squashfs-root/
 .vercel
+.gstack/
 dist-electron/
 .electron-runtime/
+node_modules/
+.alchemy/
+*.log
+.env*
+!.env.example
